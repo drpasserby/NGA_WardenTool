@@ -1,0 +1,1238 @@
+// ==UserScript==
+// @name         NGA版主管理增强工具
+// @namespace    https://greasyfork.org/zh-CN/scripts/
+// @version      1.0.0
+// @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
+// @author       UST
+// @match        *://bbs.nga.cn/*
+// @match        *://g.nga.cn/*
+// @match        *://nga.178.com/*
+// @match        *://ngabbs.com/*
+// @match        *://ngacn.cc/*
+// @license      GPL-3.0
+// @icon         http://bbs.nga.cn/favicon.ico
+// @downloadURL
+// @updateURL
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // ===================================
+    // 日志工具
+    // ===================================
+    var LOG_PREFIX = '[NGA版主管工具]';
+    function log(msg, data) {
+        console.log(LOG_PREFIX, msg, data || '');
+    }
+    function logError(msg, err) {
+        console.error(LOG_PREFIX, msg, err || '');
+    }
+
+    log('脚本已加载');
+
+    // ===================================
+    // 注入 CSS (NGA配色风格)
+    // ===================================
+    var styleEl = document.createElement('style');
+    styleEl.textContent = [
+        // ---- 遮罩与面板容器 ----
+        '#nga-warden-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:99999;justify-content:center;align-items:flex-start;padding-top:40px}',
+        '#nga-warden-overlay.show{display:flex}',
+        '#nga-warden-panel{width:960px;max-width:98vw;max-height:85vh;background:#fdf5e6;border:2px solid #ba8b5a;border-radius:3px;display:flex;flex-direction:column;box-shadow:0 0 20px rgba(0,0,0,0.4);font-family:"Microsoft YaHei","PingFang SC","Helvetica Neue",Arial,sans-serif;font-size:13px;color:#492e1b}',
+
+        // ---- 面板头部 ----
+        '#nga-warden-header{background:#492e1b;color:#fdf5e6;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}',
+        '#nga-warden-header span{font-size:15px;font-weight:bold}',
+        '#nga-warden-close{cursor:pointer;font-size:18px;color:#e0c090;line-height:1}',
+        '#nga-warden-close:hover{color:#fff}',
+
+        // ---- 标签页导航 ----
+        '#nga-warden-tabs{display:flex;background:#e8d8b8;border-bottom:2px solid #ba8b5a;flex-shrink:0}',
+        '#nga-warden-tabs .tab-btn{padding:8px 22px;cursor:pointer;color:#492e1b;font-size:13px;font-weight:bold;border-right:1px solid #c4a87c;background:#e8d8b8;transition:background 0.15s}',
+        '#nga-warden-tabs .tab-btn:hover{background:#f0e0c0}',
+        '#nga-warden-tabs .tab-btn.active{background:#fdf5e6;border-bottom:2px solid #fdf5e6;margin-bottom:-2px}',
+
+        // ---- 面板主体 ----
+        '#nga-warden-body{flex:1;overflow-y:auto;padding:10px}',
+        '.warden-page{display:none}',
+        '.warden-page.active{display:block}',
+
+        // ---- 设置区块 ----
+        '.warden-section{margin-bottom:16px;padding:10px;background:#faf7f0;border:1px solid #d4c5a9;border-radius:2px}',
+        '.warden-section h3{font-size:14px;color:#492e1b;margin:0 0 8px 0;padding-bottom:6px;border-bottom:1px solid #d4c5a9}',
+        '.warden-section p{font-size:12px;color:#8b6914;margin:4px 0}',
+
+        // ---- 表单行 ----
+        '.warden-form-row{display:flex;align-items:center;padding:6px 0;gap:8px;flex-wrap:wrap}',
+        '.warden-form-row label{color:#492e1b;font-size:13px;min-width:90px;text-align:right;font-weight:bold}',
+        '.warden-form-row .warden-input{padding:5px 10px;font-size:13px;border:1px solid #c4a87c;border-radius:2px;color:#492e1b;background:#fff;flex:1;min-width:120px}',
+        '.warden-form-row .warden-input:focus{outline:none;border-color:#8b6914;box-shadow:0 0 3px rgba(139,105,20,0.3)}',
+        '.warden-form-row .warden-input-short{width:100px;flex:0 0 auto}',
+        '.warden-form-row select.warden-input{padding:5px 8px}',
+
+        // ---- 按钮 ----
+        '.warden-btn{padding:6px 18px;font-size:13px;font-weight:bold;cursor:pointer;border:1px solid #c4a87c;background:#fdf5e6;color:#6b4e2e;border-radius:2px;white-space:nowrap}',
+        '.warden-btn:hover{background:#e8d8b8;border-color:#8b6914}',
+        '.warden-btn.primary{background:#492e1b;color:#fdf5e6;border-color:#6b4e2e}',
+        '.warden-btn.primary:hover{background:#6b4e2e}',
+        '.warden-btn.danger{background:#fadbd8;border-color:#e6a8a0;color:#c0392b}',
+        '.warden-btn.danger:hover{background:#f5b7b1}',
+        '.warden-btn.success{background:#d5f5e3;border-color:#82b366;color:#1e8449}',
+        '.warden-btn.success:hover{background:#abebc6}',
+        '.warden-btn.warn{background:#f9e79f;border-color:#d4ac0d;color:#7d6608}',
+        '.warden-btn.warn:hover{background:#f5d76e}',
+        '.warden-btn:disabled{background:#eee;color:#bbb;border-color:#ddd;cursor:default}',
+
+        // ---- 状态栏 ----
+        '#nga-warden-score-status{background:#faf3e6;border:1px solid #d4c5a9;padding:8px 12px;margin-bottom:10px;display:none}',
+        '#nga-warden-score-status.running{display:block;background:#fef9e7;border-color:#f9e79f}',
+        '#nga-warden-score-status.stopped{display:block;background:#fdedec;border-color:#f5b7b1}',
+        '#nga-warden-score-status.done{display:block;background:#eafaf1;border-color:#a9dfbf}',
+
+        // ---- 日志区域 ----
+        '#nga-warden-score-log{background:#fff;border:1px solid #d4c5a9;padding:8px;margin-top:8px;max-height:200px;overflow-y:auto;font-size:12px;font-family:Consolas,monospace}',
+        '#nga-warden-score-log .log-line{padding:2px 4px;border-bottom:1px solid #f0f0f0}',
+        '#nga-warden-score-log .log-line.success{color:#1e8449}',
+        '#nga-warden-score-log .log-line.error{color:#c0392b}',
+        '#nga-warden-score-log .log-line.info{color:#1a5276}',
+
+        // ---- 快捷预设按钮组 ----
+        '.warden-preset-group{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}',
+        '.warden-preset-btn{padding:3px 10px;font-size:11px;cursor:pointer;background:#f0e8d5;border:1px solid #d4c5a9;color:#6b4e2e;border-radius:2px}',
+        '.warden-preset-btn:hover{background:#e8d8b8;border-color:#8b6914}',
+
+        // ---- 进度条 ----
+        '.warden-progress-bar{width:100%;height:16px;background:#e0cfa6;border-radius:8px;overflow:hidden;margin:4px 0}',
+        '.warden-progress-bar .fill{height:100%;background:#492e1b;border-radius:8px;transition:width 0.3s}',
+
+        // ---- 滚动条 ----
+        '#nga-warden-body::-webkit-scrollbar{width:8px}',
+        '#nga-warden-body::-webkit-scrollbar-track{background:#f5eedb}',
+        '#nga-warden-body::-webkit-scrollbar-thumb{background:#c4a87c;border-radius:4px}',
+
+        // ---- 手机端适配 (屏幕宽度 ≤ 768px) ----
+        '@media (max-width:768px){',
+            '#nga-warden-overlay{padding-top:0;align-items:stretch}',
+            '#nga-warden-panel{width:100%;max-width:100%;max-height:100vh;border:none;border-radius:0;font-size:14px}',
+            '#nga-warden-header{padding:10px 14px}',
+            '#nga-warden-header span{font-size:16px}',
+            '#nga-warden-close{font-size:22px;padding:4px}',
+            '#nga-warden-tabs .tab-btn{padding:10px 14px;font-size:14px}',
+            '#nga-warden-body{padding:8px}',
+            '.warden-form-row{flex-direction:column;align-items:stretch}',
+            '.warden-form-row label{min-width:auto;text-align:left}',
+            '.warden-form-row .warden-input{min-width:auto}',
+            '.warden-btn{padding:8px 18px;font-size:13px}',
+        '}'
+    ].join('\n');
+    document.head.appendChild(styleEl);
+
+    // ===================================
+    // localStorage 存储键
+    // ===================================
+    var STORAGE_PREFIX = 'nga_warden_';
+    var KEY_SCORE_SETTINGS = STORAGE_PREFIX + 'score_settings';
+    var KEY_SCORE_RUNNING = STORAGE_PREFIX + 'score_running';
+    var KEY_SCORE_LOG = STORAGE_PREFIX + 'score_log';
+
+    // ===================================
+    // 默认设置
+    // ===================================
+    var DEFAULT_SCORE_SETTINGS = {
+        tid: '',           // 目标帖子TID
+        scoreAmount: '30', // 加分数值（opt预设或自定义opt值）
+        scoreMode: 'preset', // 'preset' 使用预设 | 'custom' 自定义opt
+        customOpt: '',     // 自定义opt值
+        reason: '',        // 加分理由
+        maxPages: 0,       // 最大加分页数，0表示不限制
+        stopFloor: 0,      // 停止楼层，0表示不限制
+        delay: 500         // 每次加分间隔(ms)
+    };
+
+    // 预设加分选项: { label: '显示名', opt: 'opt值', desc: '描述' }
+    var SCORE_PRESETS = [
+        { label: '15声望', opt: '67108885', desc: '基础加分 +15' },
+        { label: '30声望', opt: '67108901', desc: '常规加分 +30' },
+        { label: '45声望', opt: '67108933', desc: '较高加分 +45' },
+        { label: '75声望', opt: '67108884', desc: '高额加分 +75' },
+        { label: '15(无通知)', opt: '100663317', desc: '+15 不发送通知' },
+        { label: '30(无通知)', opt: '100663332', desc: '+30 不发送通知' },
+        { label: '活动补分15', opt: '67108885', desc: '活动补分专用' }
+    ];
+
+    // ===================================
+    // 工具函数
+    // ===================================
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+
+    function sleepAsync(ms) {
+        return new Promise(function(resolve) {
+            setTimeout(resolve, ms);
+        });
+    }
+
+    function formatTime() {
+        var d = new Date();
+        var pad = function(n) { return (n < 10 ? '0' : '') + n; };
+        return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+
+    // 从URL中解析参数
+    function getUrlParam(name) {
+        var match = window.location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    // ===================================
+    // 设置管理
+    // ===================================
+    function loadScoreSettings() {
+        try {
+            var raw = localStorage.getItem(KEY_SCORE_SETTINGS);
+            if (raw) {
+                var saved = JSON.parse(raw);
+                var result = {};
+                for (var k in DEFAULT_SCORE_SETTINGS) {
+                    if (DEFAULT_SCORE_SETTINGS.hasOwnProperty(k)) {
+                        result[k] = saved.hasOwnProperty(k) ? saved[k] : DEFAULT_SCORE_SETTINGS[k];
+                    }
+                }
+                return result;
+            }
+        } catch (e) {
+            logError('读取设置失败', e);
+        }
+        return JSON.parse(JSON.stringify(DEFAULT_SCORE_SETTINGS));
+    }
+
+    function saveScoreSettings(settings) {
+        try {
+            localStorage.setItem(KEY_SCORE_SETTINGS, JSON.stringify(settings));
+        } catch (e) {
+            logError('保存设置失败', e);
+        }
+    }
+
+    // 运行状态管理（用于跨页面自动继续）
+    function loadRunningState() {
+        try {
+            var raw = localStorage.getItem(KEY_SCORE_RUNNING);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    }
+
+    function saveRunningState(state) {
+        try {
+            localStorage.setItem(KEY_SCORE_RUNNING, JSON.stringify(state));
+        } catch (e) {
+            logError('保存运行状态失败', e);
+        }
+    }
+
+    function clearRunningState() {
+        try {
+            localStorage.removeItem(KEY_SCORE_RUNNING);
+        } catch (e) {}
+    }
+
+    // 日志管理
+    function loadScoreLog() {
+        try {
+            var raw = localStorage.getItem(KEY_SCORE_LOG);
+            return raw ? JSON.parse(raw) : [];
+        } catch (e) { return []; }
+    }
+
+    function saveScoreLog(logArr) {
+        // 只保留最近200条
+        if (logArr.length > 200) {
+            logArr = logArr.slice(-200);
+        }
+        try {
+            localStorage.setItem(KEY_SCORE_LOG, JSON.stringify(logArr));
+        } catch (e) {}
+    }
+
+    function addScoreLogEntry(type, message) {
+        var logArr = loadScoreLog();
+        logArr.push({
+            time: formatTime(),
+            type: type, // 'success' | 'error' | 'info'
+            message: message
+        });
+        saveScoreLog(logArr);
+        // 同时更新页面上的日志显示
+        appendLogToUI(type, message);
+    }
+
+    function clearScoreLog() {
+        try {
+            localStorage.setItem(KEY_SCORE_LOG, JSON.stringify([]));
+        } catch (e) {}
+    }
+
+    // ===================================
+    // 获取页面参数
+    // ===================================
+    function getCurrentPage() {
+        var page = getUrlParam('page');
+        return page ? parseInt(page) : 1;
+    }
+
+    function getCurrentTid() {
+        var tid = getUrlParam('tid');
+        return tid ? parseInt(tid) : 0;
+    }
+
+    function getCurrentFid() {
+        // 尝试多种方式获取fid
+        if (window.__CURRENT_FID) return window.__CURRENT_FID;
+        if (typeof commonui !== 'undefined' && commonui.postArg && commonui.postArg.def && commonui.postArg.def.fid) {
+            return commonui.postArg.def.fid;
+        }
+        var fid = getUrlParam('fid');
+        if (fid) return parseInt(fid);
+        // 从页面meta或隐藏字段获取
+        var fidEl = document.querySelector('input[name="fid"]');
+        if (fidEl) return parseInt(fidEl.value);
+        return 0;
+    }
+
+    // 获取当前页面所有楼层信息
+    function getCurrentPageFloors() {
+        var floors = [];
+        // NGA页面结构: postrow或post1strow开头的元素
+        var postRows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
+        for (var i = 0; i < postRows.length; i++) {
+            var row = postRows[i];
+            var floorMatch = row.id.match(/\d+$/);
+            if (!floorMatch) continue;
+            var floor = parseInt(floorMatch[0]);
+            // 跳过楼主(floor 0)
+            if (floor === 0) continue;
+            // 查找pid元素
+            var pidEl = row.querySelector('[id^="pid"]');
+            if (!pidEl) continue;
+            // pid元素的id格式为 "pid12345678" 或 "pid12345678Anchor"
+            var pidMatch = pidEl.id.match(/^pid(\d+)/);
+            if (!pidMatch) continue;
+            var pid = pidMatch[1];
+            floors.push({ floor: floor, pid: pid });
+        }
+        return floors;
+    }
+
+    // ===================================
+    // 加分核心引擎
+    // ===================================
+    var SCORE_ENGINE = {
+        isRunning: false,
+        stopRequested: false,
+        currentPage: 0,
+        processedFloors: [],
+        settings: null,
+
+        // 对单个楼层加分
+        scoreFloor: function(pid, floor, fid, tid, opt, info) {
+            var self = this;
+            return new Promise(function(resolve, reject) {
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/nuke.php', true);
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                xhr.timeout = 15000;
+
+                var params = '__lib=add_point_v3&__act=add' +
+                    '&opt=' + encodeURIComponent(opt) +
+                    '&fid=' + encodeURIComponent(fid) +
+                    '&tid=' + encodeURIComponent(tid) +
+                    '&pid=' + encodeURIComponent(pid) +
+                    '&info=' + encodeURIComponent(info) +
+                    '&value=&raw=3';
+
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        try {
+                            var resp = JSON.parse(xhr.responseText);
+                            if (resp.error) {
+                                reject(new Error('服务器错误: ' + JSON.stringify(resp.error)));
+                            } else {
+                                resolve(resp);
+                            }
+                        } catch (e) {
+                            // 非JSON响应，检查是否包含成功标志
+                            if (xhr.responseText.indexOf('"error"') === -1) {
+                                resolve({ success: true });
+                            } else {
+                                reject(new Error('响应解析失败'));
+                            }
+                        }
+                    } else {
+                        reject(new Error('HTTP ' + xhr.status));
+                    }
+                };
+
+                xhr.onerror = function() {
+                    reject(new Error('网络请求失败'));
+                };
+
+                xhr.ontimeout = function() {
+                    reject(new Error('请求超时'));
+                };
+
+                xhr.send(params);
+            });
+        },
+
+        // 处理当前页所有楼层
+        processCurrentPage: function() {
+            var self = this;
+            var settings = self.settings;
+            var tid = parseInt(settings.tid);
+            var fid = getCurrentFid();
+
+            if (!fid) {
+                return Promise.reject(new Error('无法获取版块ID(fid)，请确认在NGA论坛页面中运行'));
+            }
+            if (!tid) {
+                return Promise.reject(new Error('请先设置目标帖子TID'));
+            }
+
+            // 获取opt值
+            var opt;
+            if (settings.scoreMode === 'custom' && settings.customOpt) {
+                opt = settings.customOpt;
+            } else {
+                opt = settings.scoreAmount;
+            }
+
+            var floors = getCurrentPageFloors();
+            var currentPage = getCurrentPage();
+            self.currentPage = currentPage;
+
+            log('当前第' + currentPage + '页，获取到 ' + floors.length + ' 个待处理楼层');
+
+            // 更新面板状态
+            updateScoreStatusUI('running', '正在处理第 ' + currentPage + ' 页，共 ' + floors.length + ' 个楼层...');
+
+            // 过滤掉已处理的楼层和超过停止楼层的
+            var pendingFloors = [];
+            for (var i = 0; i < floors.length; i++) {
+                var f = floors[i];
+                // 如果设定了停止楼层，跳过超过的
+                if (settings.stopFloor > 0 && f.floor > settings.stopFloor) {
+                    addScoreLogEntry('info', '楼层#' + f.floor + ' 超出停止楼层，跳过');
+                    continue;
+                }
+                // 跳过已处理的
+                if (self.processedFloors.indexOf(f.floor) >= 0) {
+                    addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 已处理，跳过');
+                    continue;
+                }
+                pendingFloors.push(f);
+            }
+
+            if (pendingFloors.length === 0) {
+                addScoreLogEntry('info', '第' + currentPage + '页没有待处理楼层');
+                return Promise.resolve({ noFloors: true });
+            }
+
+            // 顺序处理每个楼层
+            var result = { processed: 0, errors: 0, reachedStopFloor: false };
+
+            function processNext(index) {
+                if (index >= pendingFloors.length) {
+                    return Promise.resolve(result);
+                }
+                if (self.stopRequested) {
+                    addScoreLogEntry('info', '用户手动停止');
+                    return Promise.resolve(result);
+                }
+
+                var floor = pendingFloors[index];
+
+                addScoreLogEntry('info', '正在加分: 楼层#' + floor.floor + ' (PID:' + floor.pid + ')...');
+
+                return self.scoreFloor(floor.pid, floor.floor, fid, tid, opt, settings.reason)
+                    .then(function(resp) {
+                        addScoreLogEntry('success', '楼层#' + floor.floor + ' (PID:' + floor.pid + ') 加分成功!');
+                        self.processedFloors.push(floor.floor);
+                        result.processed++;
+
+                        // 更新运行状态
+                        saveRunningState({
+                            tid: tid,
+                            currentPage: currentPage,
+                            processedFloors: self.processedFloors,
+                            processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0) + 1
+                        });
+
+                        // 检查是否到达停止楼层
+                        if (settings.stopFloor > 0 && floor.floor >= settings.stopFloor) {
+                            addScoreLogEntry('info', '已到达停止楼层#' + settings.stopFloor + '，停止加分');
+                            result.reachedStopFloor = true;
+                            return result;
+                        }
+
+                        // 间隔延迟
+                        return sleepAsync(settings.delay).then(function() {
+                            if (self.stopRequested) {
+                                return result;
+                            }
+                            return processNext(index + 1);
+                        });
+                    })
+                    .catch(function(err) {
+                        addScoreLogEntry('error', '楼层#' + floor.floor + ' (PID:' + floor.pid + ') 加分失败: ' + err.message);
+                        result.errors++;
+
+                        // 出错后也延迟再继续
+                        return sleepAsync(settings.delay).then(function() {
+                            if (self.stopRequested) {
+                                return result;
+                            }
+                            return processNext(index + 1);
+                        });
+                    });
+            }
+
+            return processNext(0);
+        },
+
+        // 导航到指定TID的指定页
+        navigateToPage: function(tid, page) {
+            var url = '/read.php?tid=' + tid + '&page=' + page;
+            log('跳转到: ' + url);
+            window.location.href = url;
+        },
+
+        // 启动批量加分
+        start: function(settings) {
+            var self = this;
+            self.settings = settings;
+            self.isRunning = true;
+            self.stopRequested = false;
+            self.processedFloors = [];
+            self.currentPage = 0;
+
+            // 保存设置
+            saveScoreSettings(settings);
+
+            // 清除旧日志
+            clearScoreLog();
+
+            // 保存运行状态
+            saveRunningState({
+                tid: parseInt(settings.tid),
+                currentPage: 0,
+                processedFloors: [],
+                processedCount: 0,
+                startTime: Date.now()
+            });
+
+            // 显示状态栏
+            updateScoreStatusUI('running', '准备开始批量加分...');
+            clearLogUI();
+
+            addScoreLogEntry('info', '========== 批量加分开始 ==========');
+            addScoreLogEntry('info', '目标TID: ' + settings.tid);
+            addScoreLogEntry('info', '加分opt: ' + (settings.scoreMode === 'custom' ? settings.customOpt : settings.scoreAmount));
+            addScoreLogEntry('info', '加分理由: ' + (settings.reason || '(未设置)'));
+            if (settings.maxPages > 0) {
+                addScoreLogEntry('info', '最大页数: ' + settings.maxPages);
+            }
+            if (settings.stopFloor > 0) {
+                addScoreLogEntry('info', '停止楼层: #' + settings.stopFloor);
+            }
+
+            // 如果当前页面不是目标帖子页面，先导航过去
+            var currentTid = getCurrentTid();
+            var currentPage = getCurrentPage();
+
+            if (currentTid !== parseInt(settings.tid) || currentPage !== 1) {
+                // 更新运行状态为目标页面
+                saveRunningState({
+                    tid: parseInt(settings.tid),
+                    currentPage: 1,
+                    processedFloors: [],
+                    processedCount: 0,
+                    startTime: Date.now()
+                });
+                addScoreLogEntry('info', '正在跳转到目标帖子第1页...');
+                self.navigateToPage(settings.tid, 1);
+                return; // 页面跳转后会通过resume继续
+            }
+
+            // 开始处理当前页
+            self._runPageLoop(parseInt(settings.tid), 1);
+        },
+
+        // 页面循环处理
+        _runPageLoop: function(tid, startPage) {
+            var self = this;
+            var settings = self.settings;
+            var currentPage = startPage;
+
+            function processPage() {
+                if (self.stopRequested) {
+                    self.isRunning = false;
+                    clearRunningState();
+                    updateScoreStatusUI('stopped', '批量加分已手动停止');
+                    addScoreLogEntry('info', '========== 批量加分已停止 ==========');
+                    updateControlButtons(false);
+                    return;
+                }
+
+                // 检查页数限制
+                if (settings.maxPages > 0 && (currentPage - startPage + 1) > settings.maxPages) {
+                    self.isRunning = false;
+                    clearRunningState();
+                    updateScoreStatusUI('done', '批量加分完成！已达到最大页数限制(' + settings.maxPages + '页)');
+                    addScoreLogEntry('info', '========== 批量加分完成(达到页数限制) ==========');
+                    updateControlButtons(false);
+                    return;
+                }
+
+                self.currentPage = currentPage;
+                updateScoreStatusUI('running', '正在处理第 ' + currentPage + ' 页...');
+                addScoreLogEntry('info', '--- 开始处理第 ' + currentPage + ' 页 ---');
+
+                // 更新运行状态
+                saveRunningState({
+                    tid: tid,
+                    currentPage: currentPage,
+                    processedFloors: self.processedFloors,
+                    processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0)
+                });
+
+                self.processCurrentPage()
+                    .then(function(result) {
+                        if (self.stopRequested) {
+                            self.isRunning = false;
+                            clearRunningState();
+                            updateScoreStatusUI('stopped', '批量加分已手动停止');
+                            updateControlButtons(false);
+                            return;
+                        }
+
+                        if (result.reachedStopFloor) {
+                            // 到达停止楼层
+                            self.isRunning = false;
+                            clearRunningState();
+                            updateScoreStatusUI('done', '批量加分完成！已到达指定楼层');
+                            addScoreLogEntry('info', '========== 批量加分完成(到达停止楼层) ==========');
+                            updateControlButtons(false);
+                            return;
+                        }
+
+                        addScoreLogEntry('info', '第 ' + currentPage + ' 页处理完成: 成功' + result.processed + '条, 失败' + result.errors + '条');
+
+                        // 检查是否有更多页
+                        var floors = getCurrentPageFloors();
+                        if (floors.length === 0 && result.processed === 0) {
+                            // 没有更多楼层了，可能是最后一页
+                            self.isRunning = false;
+                            clearRunningState();
+                            updateScoreStatusUI('done', '批量加分完成！已处理到最后一页');
+                            addScoreLogEntry('info', '========== 批量加分完成(已到最后一页) ==========');
+                            updateControlButtons(false);
+                            return;
+                        }
+
+                        // 检查是否所有楼层都已超过停止楼层
+                        if (settings.stopFloor > 0) {
+                            var allBeyond = true;
+                            for (var i = 0; i < floors.length; i++) {
+                                if (floors[i].floor <= settings.stopFloor) {
+                                    allBeyond = false;
+                                    break;
+                                }
+                            }
+                            if (allBeyond) {
+                                self.isRunning = false;
+                                clearRunningState();
+                                updateScoreStatusUI('done', '批量加分完成！所有楼层均超过停止楼层');
+                                addScoreLogEntry('info', '========== 批量加分完成(超过停止楼层) ==========');
+                                updateControlButtons(false);
+                                return;
+                            }
+                        }
+
+                        // 更新运行状态为下一页，然后跳转
+                        var nextPage = currentPage + 1;
+                        saveRunningState({
+                            tid: tid,
+                            currentPage: nextPage,
+                            processedFloors: self.processedFloors,
+                            processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0)
+                        });
+                        addScoreLogEntry('info', '正在跳转到第 ' + nextPage + ' 页...');
+                        self.navigateToPage(tid, nextPage);
+                    })
+                    .catch(function(err) {
+                        addScoreLogEntry('error', '处理第' + currentPage + '页时出错: ' + err.message);
+                        self.isRunning = false;
+                        clearRunningState();
+                        updateScoreStatusUI('stopped', '批量加分出错: ' + err.message);
+                        updateControlButtons(false);
+                    });
+            }
+
+            processPage();
+        },
+
+        // 恢复批量加分（页面加载后自动调用）
+        resume: function() {
+            var self = this;
+            var runningState = loadRunningState();
+            if (!runningState) return false;
+
+            var settings = loadScoreSettings();
+            self.settings = settings;
+
+            var currentTid = getCurrentTid();
+            if (currentTid !== runningState.tid) {
+                // 不在目标帖子页面，可能是用户手动导航走了，等待用户返回
+                log('当前页面TID(' + currentTid + ')与目标TID(' + runningState.tid + ')不匹配，等待用户返回');
+                return false;
+            }
+
+            // 使用URL中的当前页码（我们已经导航到这个页面了）
+            var currentPageFromUrl = getCurrentPage();
+            var resumePage = currentPageFromUrl || runningState.currentPage || 1;
+
+            self.isRunning = true;
+            self.stopRequested = false;
+            self.processedFloors = runningState.processedFloors || [];
+            self.currentPage = resumePage;
+
+            addScoreLogEntry('info', '========== 恢复批量加分 ==========');
+            addScoreLogEntry('info', '继续处理第 ' + resumePage + ' 页');
+
+            // 更新UI状态
+            updateScoreStatusUI('running', '正在恢复批量加分...');
+            updateControlButtons(true);
+
+            // 继续从当前页处理
+            self._runPageLoop(runningState.tid, resumePage);
+            return true;
+        },
+
+        // 停止批量加分
+        stop: function() {
+            this.stopRequested = true;
+            this.isRunning = false;
+            clearRunningState();
+            updateScoreStatusUI('stopped', '正在停止...');
+            addScoreLogEntry('info', '========== 收到停止指令 ==========');
+            updateControlButtons(false);
+        }
+    };
+
+    // ===================================
+    // UI: 创建主面板
+    // ===================================
+    function createPanel() {
+        log('创建面板DOM');
+        var overlay = document.createElement('div');
+        overlay.id = 'nga-warden-overlay';
+        overlay.innerHTML =
+            '<div id="nga-warden-panel">' +
+                '<div id="nga-warden-header">' +
+                    '<span>NGA版主管理增强工具</span>' +
+                    '<span id="nga-warden-close" title="关闭">✕</span>' +
+                '</div>' +
+                '<div id="nga-warden-tabs">' +
+                    '<div class="tab-btn active" data-tab="0">批量加分</div>' +
+                    '<div class="tab-btn" data-tab="1">关于</div>' +
+                '</div>' +
+                '<div id="nga-warden-body">' +
+                    // ---- 页面0: 批量加分 ----
+                    '<div class="warden-page active" data-page="0">' +
+                        createBatchScorePageHTML() +
+                    '</div>' +
+                    // ---- 页面1: 关于 ----
+                    '<div class="warden-page" data-page="1">' +
+                        '<div class="warden-section">' +
+                            '<h3>NGA版主管理增强工具</h3>' +
+                            '<p>版本: 1.0.0</p>' +
+                            '<p>作者: UST & wlxc</p>' +
+                            '<p>功能模块:</p>' +
+                            '<p>• <b>批量加分</b> - 自动对帖子楼层进行批量加分操作，支持设置加分数量、理由、页数限制和楼层限制。使用浏览器已有的Cookie进行身份验证，无需手动配置。</p>' +
+                            '<p style="margin-top:8px;color:#8b6914;">⚠ 使用提示：批量加分过程中请勿关闭或切换页面，脚本会自动跳转到下一页继续加分。</p>' +
+                            '<p style="color:#8b6914;">⚠ 加分完成后请及时关闭本工具，避免误操作。</p>' +
+                        '</div>' +
+                        '<div class="warden-section">' +
+                            '<h3>加分opt预设说明</h3>' +
+                            '<p>不同opt值对应不同的加分数量和通知方式:</p>' +
+                            '<p>• <b>67108885</b>: 15声望 (有通知)</p>' +
+                            '<p>• <b>67108901</b>: 30声望 (有通知)</p>' +
+                            '<p>• <b>67108933</b>: 45声望 (有通知)</p>' +
+                            '<p>• <b>67108884</b>: 75声望 (有通知)</p>' +
+                            '<p>• <b>100663317</b>: 15声望 (无通知)</p>' +
+                            '<p>• <b>100663332</b>: 30声望 (无通知)</p>' +
+                            '<p style="margin-top:6px;color:#8b6914;">如上述预设不满足需求，可在"自定义opt"模式下直接输入opt值。</p>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(overlay);
+        log('面板DOM已创建');
+        return overlay;
+    }
+
+    function createBatchScorePageHTML() {
+        var html = '';
+        html += '<div class="warden-section">';
+        html += '<h3>批量加分设置</h3>';
+
+        // TID
+        html += '<div class="warden-form-row">';
+        html += '<label>TID (帖子ID):</label>';
+        html += '<input type="text" class="warden-input" id="warden-score-tid" placeholder="输入目标帖子TID" title="要加分的帖子ID，可从URL中获取(如read.php?tid=123456)">';
+        html += '</div>';
+
+        // 加分模式选择
+        html += '<div class="warden-form-row">';
+        html += '<label>加分模式:</label>';
+        html += '<select class="warden-input warden-input-short" id="warden-score-mode" style="width:auto;">';
+        html += '<option value="preset">预设opt</option>';
+        html += '<option value="custom">自定义opt</option>';
+        html += '</select>';
+        html += '</div>';
+
+        // 预设opt选择（默认显示）
+        html += '<div class="warden-form-row" id="warden-preset-row">';
+        html += '<label>加分数值:</label>';
+        html += '<select class="warden-input" id="warden-score-preset" style="width:auto;">';
+        for (var i = 0; i < SCORE_PRESETS.length; i++) {
+            var preset = SCORE_PRESETS[i];
+            html += '<option value="' + preset.opt + '"' + (preset.opt === '67108901' ? ' selected' : '') + '>' + preset.label + ' (opt:' + preset.opt + ')</option>';
+        }
+        html += '</select>';
+        html += '<span style="font-size:11px;color:#8b6914;">';
+
+        html += '</span>';
+        html += '</div>';
+
+        // 自定义opt输入（默认隐藏）
+        html += '<div class="warden-form-row" id="warden-custom-opt-row" style="display:none;">';
+        html += '<label>自定义opt:</label>';
+        html += '<input type="text" class="warden-input" id="warden-score-custom-opt" placeholder="输入自定义opt值，如 100663332">';
+        html += '</div>';
+
+        // 加分理由
+        html += '<div class="warden-form-row">';
+        html += '<label>加分理由:</label>';
+        html += '<input type="text" class="warden-input" id="warden-score-reason" placeholder="输入加分理由(如: 活动奖励)" title="将被记录在加分操作的原因中">';
+        html += '</div>';
+
+        // 加分间隔
+        html += '<div class="warden-form-row">';
+        html += '<label>加分间隔(ms):</label>';
+        html += '<input type="number" class="warden-input warden-input-short" id="warden-score-delay" value="500" min="100" max="5000" step="100" title="每次加分之间的延迟时间，建议500-1000ms">';
+        html += '<span style="font-size:11px;color:#8b6914;">建议500-1000ms，太快可能被限制</span>';
+        html += '</div>';
+
+        // 停止条件
+        html += '<div class="warden-form-row">';
+        html += '<label>最大页数:</label>';
+        html += '<input type="number" class="warden-input warden-input-short" id="warden-score-maxpages" value="0" min="0" title="达到此页数后自动停止，0表示不限制">';
+        html += '<span style="font-size:11px;color:#8b6914;">0=不限制</span>';
+        html += '</div>';
+
+        html += '<div class="warden-form-row">';
+        html += '<label>停止楼层:</label>';
+        html += '<input type="number" class="warden-input warden-input-short" id="warden-score-stopfloor" value="0" min="0" title="加到该楼层后自动停止，0表示不限制">';
+        html += '<span style="font-size:11px;color:#8b6914;">0=不限制，设为N则加到第N层停止</span>';
+        html += '</div>';
+
+        html += '</div>'; // end warden-section
+
+        // 当前页面信息
+        html += '<div class="warden-section">';
+        html += '<h3>当前页面信息</h3>';
+        html += '<div class="warden-form-row">';
+        html += '<label>当前TID:</label>';
+        html += '<span style="color:#492e1b;font-weight:bold;" id="warden-current-tid">' + (getCurrentTid() || '不在帖子页面') + '</span>';
+        html += '</div>';
+        html += '<div class="warden-form-row">';
+        html += '<label>当前FID:</label>';
+        html += '<span style="color:#492e1b;font-weight:bold;" id="warden-current-fid">' + (getCurrentFid() || '无法获取') + '</span>';
+        html += '</div>';
+        html += '<div class="warden-form-row">';
+        html += '<label>当前页数:</label>';
+        html += '<span style="color:#492e1b;font-weight:bold;" id="warden-current-page">第' + getCurrentPage() + '页</span>';
+        html += '</div>';
+        html += '<div class="warden-form-row">';
+        html += '<label>当前页楼层:</label>';
+        html += '<span style="color:#492e1b;font-weight:bold;" id="warden-current-floors">检测中...</span>';
+        html += '</div>';
+        html += '</div>';
+
+        // 进度状态
+        html += '<div id="nga-warden-score-status">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+        html += '<span id="warden-score-status-text" style="font-weight:bold;"></span>';
+        html += '<span id="warden-score-status-count" style="font-size:12px;color:#8b6914;"></span>';
+        html += '</div>';
+        html += '<div class="warden-progress-bar" style="display:none;" id="warden-progress-container">';
+        html += '<div class="fill" id="warden-progress-fill" style="width:0%"></div>';
+        html += '</div>';
+        html += '</div>';
+
+        // 控制按钮
+        html += '<div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap;">';
+        html += '<button class="warden-btn success" id="warden-btn-start" title="开始批量加分">▶ 启动加分</button>';
+        html += '<button class="warden-btn danger" id="warden-btn-stop" disabled title="停止批量加分">■ 停止加分</button>';
+        html += '<button class="warden-btn" id="warden-btn-clear-log" title="清除日志显示">清除日志</button>';
+        html += '</div>';
+
+        // 日志区域
+        html += '<div style="font-size:12px;color:#6b4e2e;margin-top:8px;font-weight:bold;">运行日志:</div>';
+        html += '<div id="nga-warden-score-log">';
+        html += '<div class="log-line info">就绪，等待操作...</div>';
+        html += '</div>';
+
+        return html;
+    }
+
+    // ===================================
+    // UI: 创建打开按钮
+    // ===================================
+    function createOpenButton() {
+        log('创建打开按钮');
+        var btnWrap = document.createElement('div');
+        btnWrap.className = 'td';
+        var a = document.createElement('a');
+        a.className = 'mmdefault';
+        a.href = 'javascript:void(0);';
+        a.style.whiteSpace = 'nowrap';
+        a.textContent = '版主工具';
+        btnWrap.appendChild(a);
+
+        // 桌面端: .right / 手机端: #m_nav, .nav, .top_nav
+        var container = document.querySelector('.right');
+        if (!container) {
+            container = document.querySelector('#m_nav, #nav, .nav, .top_nav, #ucp_menu, .header-user, .user-menu, .m-top-bar');
+        }
+        if (container) {
+            container.insertBefore(btnWrap, container.firstChild);
+            log('按钮已添加到导航栏');
+        } else {
+            log('未找到合适的按钮容器，附加到 body');
+            btnWrap.style.position = 'fixed';
+            btnWrap.style.bottom = '20px';
+            btnWrap.style.right = '20px';
+            btnWrap.style.zIndex = '99990';
+            document.body.appendChild(btnWrap);
+        }
+        return btnWrap;
+    }
+
+    // ===================================
+    // UI: 更新函数
+    // ===================================
+    function updateScoreStatusUI(state, message) {
+        var statusEl = document.getElementById('nga-warden-score-status');
+        var textEl = document.getElementById('warden-score-status-text');
+        var countEl = document.getElementById('warden-score-status-count');
+
+        if (statusEl) {
+            statusEl.className = state; // running | stopped | done
+            statusEl.style.display = 'block';
+        }
+        if (textEl) textEl.textContent = message;
+        if (countEl && SCORE_ENGINE.isRunning) {
+            countEl.textContent = '已处理: ' + SCORE_ENGINE.processedFloors.length + ' 个楼层';
+        }
+    }
+
+    function updateControlButtons(isRunning) {
+        var startBtn = document.getElementById('warden-btn-start');
+        var stopBtn = document.getElementById('warden-btn-stop');
+        if (startBtn) startBtn.disabled = isRunning;
+        if (stopBtn) stopBtn.disabled = !isRunning;
+    }
+
+    function appendLogToUI(type, message) {
+        var logEl = document.getElementById('nga-warden-score-log');
+        if (!logEl) return;
+        var line = document.createElement('div');
+        line.className = 'log-line ' + type;
+        line.textContent = '[' + formatTime() + '] ' + message;
+        logEl.appendChild(line);
+        // 自动滚动到底部
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function clearLogUI() {
+        var logEl = document.getElementById('nga-warden-score-log');
+        if (logEl) {
+            logEl.innerHTML = '';
+        }
+    }
+
+    function updatePageInfoUI() {
+        var tidEl = document.getElementById('warden-current-tid');
+        var fidEl = document.getElementById('warden-current-fid');
+        var pageEl = document.getElementById('warden-current-page');
+        var floorsEl = document.getElementById('warden-current-floors');
+
+        if (tidEl) tidEl.textContent = getCurrentTid() || '不在帖子页面';
+        if (fidEl) fidEl.textContent = getCurrentFid() || '无法获取';
+        if (pageEl) pageEl.textContent = '第' + getCurrentPage() + '页';
+
+        if (floorsEl) {
+            var floors = getCurrentPageFloors();
+            if (floors.length > 0) {
+                floorsEl.textContent = floors.length + '个回复楼层 (#1-' + floors[floors.length - 1].floor + ')';
+            } else {
+                floorsEl.textContent = '未检测到楼层（可能不在帖子页面）';
+            }
+        }
+    }
+
+    function loadSettingsToForm() {
+        var settings = loadScoreSettings();
+        var tidEl = document.getElementById('warden-score-tid');
+        var modeEl = document.getElementById('warden-score-mode');
+        var presetEl = document.getElementById('warden-score-preset');
+        var customOptEl = document.getElementById('warden-score-custom-opt');
+        var reasonEl = document.getElementById('warden-score-reason');
+        var delayEl = document.getElementById('warden-score-delay');
+        var maxPagesEl = document.getElementById('warden-score-maxpages');
+        var stopFloorEl = document.getElementById('warden-score-stopfloor');
+
+        if (tidEl) tidEl.value = settings.tid || '';
+        if (modeEl) modeEl.value = settings.scoreMode || 'preset';
+        if (presetEl) {
+            // 尝试匹配预设值
+            for (var i = 0; i < presetEl.options.length; i++) {
+                if (presetEl.options[i].value === settings.scoreAmount) {
+                    presetEl.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+        if (customOptEl) customOptEl.value = settings.customOpt || '';
+        if (reasonEl) reasonEl.value = settings.reason || '';
+        if (delayEl) delayEl.value = settings.delay || 500;
+        if (maxPagesEl) maxPagesEl.value = settings.maxPages || 0;
+        if (stopFloorEl) stopFloorEl.value = settings.stopFloor || 0;
+
+        // 切换模式显示
+        toggleScoreModeUI(settings.scoreMode || 'preset');
+    }
+
+    function toggleScoreModeUI(mode) {
+        var presetRow = document.getElementById('warden-preset-row');
+        var customOptRow = document.getElementById('warden-custom-opt-row');
+        if (mode === 'custom') {
+            if (presetRow) presetRow.style.display = 'none';
+            if (customOptRow) customOptRow.style.display = 'flex';
+        } else {
+            if (presetRow) presetRow.style.display = 'flex';
+            if (customOptRow) customOptRow.style.display = 'none';
+        }
+    }
+
+    function collectSettingsFromForm() {
+        var settings = loadScoreSettings();
+        var tidEl = document.getElementById('warden-score-tid');
+        var modeEl = document.getElementById('warden-score-mode');
+        var presetEl = document.getElementById('warden-score-preset');
+        var customOptEl = document.getElementById('warden-score-custom-opt');
+        var reasonEl = document.getElementById('warden-score-reason');
+        var delayEl = document.getElementById('warden-score-delay');
+        var maxPagesEl = document.getElementById('warden-score-maxpages');
+        var stopFloorEl = document.getElementById('warden-score-stopfloor');
+
+        settings.tid = tidEl ? tidEl.value.trim() : '';
+        settings.scoreMode = modeEl ? modeEl.value : 'preset';
+        if (settings.scoreMode === 'custom') {
+            settings.customOpt = customOptEl ? customOptEl.value.trim() : '';
+            settings.scoreAmount = settings.customOpt;
+        } else {
+            settings.scoreAmount = presetEl ? presetEl.value : '67108901';
+        }
+        settings.reason = reasonEl ? reasonEl.value.trim() : '';
+        settings.delay = delayEl ? parseInt(delayEl.value) || 500 : 500;
+        settings.maxPages = maxPagesEl ? parseInt(maxPagesEl.value) || 0 : 0;
+        settings.stopFloor = stopFloorEl ? parseInt(stopFloorEl.value) || 0 : 0;
+
+        return settings;
+    }
+
+    // ===================================
+    // UI: 面板显示/隐藏
+    // ===================================
+    function showPanel() {
+        log('显示面板');
+        var overlay = document.getElementById('nga-warden-overlay');
+        if (overlay) {
+            overlay.classList.add('show');
+            switchTab(0);
+            loadSettingsToForm();
+            updatePageInfoUI();
+
+            // 检查是否有正在运行的任务
+            var runningState = loadRunningState();
+            if (runningState) {
+                updateScoreStatusUI('running', '检测到未完成的加分任务');
+                addScoreLogEntry('info', '检测到未完成的加分任务(TID:' + runningState.tid + ', 当前第' + runningState.currentPage + '页)');
+                updateControlButtons(false); // 让用户决定是否继续
+            }
+        }
+    }
+
+    function hidePanel() {
+        var overlay = document.getElementById('nga-warden-overlay');
+        if (overlay) { overlay.classList.remove('show'); }
+    }
+
+    function switchTab(index) {
+        var tabBtns = document.querySelectorAll('#nga-warden-tabs .tab-btn');
+        var pages = document.querySelectorAll('#nga-warden-body .warden-page');
+        for (var i = 0; i < tabBtns.length; i++) {
+            tabBtns[i].classList.toggle('active', i === index);
+        }
+        for (var j = 0; j < pages.length; j++) {
+            pages[j].classList.toggle('active', j === index);
+        }
+        if (index === 0) {
+            updatePageInfoUI();
+            loadSettingsToForm();
+        }
+    }
+
+    // ===================================
+    // 事件绑定
+    // ===================================
+    function bindEvents() {
+        log('绑定事件');
+
+        // 关闭面板
+        document.getElementById('nga-warden-close').addEventListener('click', hidePanel);
+
+        // 点击遮罩关闭
+        document.getElementById('nga-warden-overlay').addEventListener('click', function(e) {
+            if (e.target === this) hidePanel();
+        });
+
+        // 标签页切换
+        document.getElementById('nga-warden-tabs').addEventListener('click', function(e) {
+            var btn = e.target.closest ? e.target.closest('.tab-btn') : null;
+            if (!btn) return;
+            var idx = parseInt(btn.getAttribute('data-tab'));
+            if (!isNaN(idx)) switchTab(idx);
+        });
+
+        // 加分模式切换
+        var modeSelect = document.getElementById('warden-score-mode');
+        if (modeSelect) {
+            modeSelect.addEventListener('change', function() {
+                toggleScoreModeUI(this.value);
+            });
+        }
+
+        // 启动加分按钮
+        var startBtn = document.getElementById('warden-btn-start');
+        if (startBtn) {
+            startBtn.addEventListener('click', function() {
+                var settings = collectSettingsFromForm();
+                if (!settings.tid) {
+                    alert('请先输入目标帖子TID！');
+                    return;
+                }
+                if (settings.scoreMode === 'custom' && !settings.customOpt) {
+                    alert('请先输入自定义opt值！');
+                    return;
+                }
+                log('启动批量加分', settings);
+                saveScoreSettings(settings);
+                updateControlButtons(true);
+                SCORE_ENGINE.start(settings);
+            });
+        }
+
+        // 停止加分按钮
+        var stopBtn = document.getElementById('warden-btn-stop');
+        if (stopBtn) {
+            stopBtn.addEventListener('click', function() {
+                log('手动停止批量加分');
+                SCORE_ENGINE.stop();
+            });
+        }
+
+        // 清除日志按钮
+        var clearLogBtn = document.getElementById('warden-btn-clear-log');
+        if (clearLogBtn) {
+            clearLogBtn.addEventListener('click', function() {
+                clearScoreLog();
+                clearLogUI();
+                addScoreLogEntry('info', '日志已清除');
+            });
+        }
+
+        // ESC关闭面板
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                var overlay = document.getElementById('nga-warden-overlay');
+                if (overlay && overlay.classList.contains('show')) {
+                    hidePanel();
+                }
+            }
+        });
+
+        log('事件绑定完成');
+    }
+
+    // ===================================
+    // 初始化
+    // ===================================
+    function init() {
+        log('开始初始化');
+        try {
+            createPanel();
+            bindEvents();
+            var btnWrap = createOpenButton();
+            btnWrap.addEventListener('click', showPanel);
+
+            // 检查是否需要自动恢复加分任务
+            var runningState = loadRunningState();
+            if (runningState) {
+                var currentTid = getCurrentTid();
+                if (currentTid === runningState.tid) {
+                    log('检测到未完成的加分任务，准备恢复...');
+                    // 延迟恢复，确保页面完全加载及DOM就绪
+                    setTimeout(function() {
+                        log('自动恢复批量加分...');
+                        var resumed = SCORE_ENGINE.resume();
+                        if (!resumed) {
+                            log('恢复失败，状态可能已变更');
+                        }
+                    }, 2000);
+                } else {
+                    log('检测到未完成的加分任务但当前不在目标页面(TID=' + currentTid + ', 目标TID=' + runningState.tid + ')，等待用户操作');
+                }
+            }
+
+            log('初始化完成');
+        } catch (e) {
+            logError('初始化异常', e);
+        }
+    }
+
+    // 等待页面准备就绪
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})();
