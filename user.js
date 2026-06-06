@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/
-// @version      1.0.2
+// @version      1.0.3
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -67,6 +67,15 @@
         // ---- 表单行 ----
         '.warden-form-row{display:flex;align-items:center;padding:6px 0;gap:8px;flex-wrap:wrap}',
         '.warden-form-row label{color:#492e1b;font-size:13px;min-width:90px;text-align:right;font-weight:bold}',
+        // ---- 开关样式 ----
+        '.kw-toggle{position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0}',
+        '.kw-toggle input{opacity:0;width:0;height:0}',
+        '.kw-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:#ccc;transition:.2s;border-radius:22px}',
+        '.kw-slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background-color:#fff;transition:.2s;border-radius:50%}',
+        '.kw-toggle input:checked+.kw-slider{background-color:#27ae60}',
+        '.kw-toggle input:checked+.kw-slider:before{transform:translateX(18px)}',
+        // ---- 表单行中的开关覆盖 ----
+        '.warden-form-row .kw-toggle{min-width:0;width:40px;text-align:left;font-weight:normal;flex-shrink:0}',
         '.warden-form-row .warden-input{padding:5px 10px;font-size:13px;border:1px solid #c4a87c;border-radius:2px;color:#492e1b;background:#fff;flex:1;min-width:120px}',
         '.warden-form-row .warden-input:focus{outline:none;border-color:#8b6914;box-shadow:0 0 3px rgba(139,105,20,0.3)}',
         '.warden-form-row .warden-input-short{width:100px;flex:0 0 auto}',
@@ -143,9 +152,9 @@
     var DEFAULT_SCORE_SETTINGS = {
         tid: '',           // 目标帖子TID
         scoreValue: '30',  // 加减声望值（正数加分，负数扣分，范围-1500~1500）
-        addMoney: true,    // 增加/扣除金钱
-        addPrestige: true, // 增加威望
-        sendPM: true,      // 给作者发送PM
+        addMoney: false,   // 增加/扣除金钱（默认关闭）
+        addPrestige: false,// 增加威望（默认关闭）
+        sendPM: true,      // 给作者发送PM（默认开启）
         reason: '',        // 加分理由
         maxPages: 0,       // 最大加分页数，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
@@ -839,7 +848,7 @@
         html += '<div class="warden-form-row">';
         html += '<label>增加/扣除金钱:</label>';
         html += '<label class="kw-toggle" style="flex:0 0 auto;">';
-        html += '<input type="checkbox" id="warden-score-money" checked>';
+        html += '<input type="checkbox" id="warden-score-money">';
         html += '<span class="kw-slider"></span>';
         html += '</label>';
         html += '<span style="font-size:11px;color:#8b6914;">100声望合1金币，扣减声望时可扣除金钱</span>';
@@ -849,7 +858,7 @@
         html += '<div class="warden-form-row">';
         html += '<label>增加威望:</label>';
         html += '<label class="kw-toggle" style="flex:0 0 auto;">';
-        html += '<input type="checkbox" id="warden-score-prestige" checked>';
+        html += '<input type="checkbox" id="warden-score-prestige">';
         html += '<span class="kw-slider"></span>';
         html += '</label>';
         html += '<span style="font-size:11px;color:#8b6914;">150声望合1威望</span>';
@@ -867,7 +876,8 @@
         // 加分理由
         html += '<div class="warden-form-row">';
         html += '<label>加分说明:</label>';
-        html += '<input type="text" class="warden-input" id="warden-score-reason" placeholder="输入加分说明(如: 活动奖励)" title="将被记录在加分操作的info字段中，自动GBK编码">';
+        html += '<input type="text" class="warden-input" id="warden-score-reason" placeholder="输入加分说明" title="将被记录在加分操作的info字段中">';
+        html += '<span style="font-size:11px;color:#c0392b;">使用中文可能会有乱码</span>';
         html += '</div>';
 
         // 加分间隔
