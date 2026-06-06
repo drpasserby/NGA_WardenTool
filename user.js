@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/
-// @version      1.0.1
+// @version      1.0.2
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -142,26 +142,21 @@
     // ===================================
     var DEFAULT_SCORE_SETTINGS = {
         tid: '',           // 目标帖子TID
-        scoreAmount: '30', // 加分数值（opt预设或自定义opt值）
-        scoreMode: 'preset', // 'preset' 使用预设 | 'custom' 自定义opt
-        customOpt: '',     // 自定义opt值
-        reason: '',        // 加分理由（原始中文）
-        encodedReason: '', // 加分理由（GBK编码后）
+        scoreValue: '30',  // 加减声望值（正数加分，负数扣分，范围-1500~1500）
+        addMoney: true,    // 增加/扣除金钱
+        addPrestige: true, // 增加威望
+        sendPM: true,      // 给作者发送PM
+        reason: '',        // 加分理由
         maxPages: 0,       // 最大加分页数，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
         delay: 50          // 每次加分间隔(ms)
     };
 
-    // 预设加分选项: { label: '显示名', opt: 'opt值', desc: '描述' }
-    var SCORE_PRESETS = [
-        { label: '15声望', opt: '67108885', desc: '基础加分 +15' },
-        { label: '30声望', opt: '67108901', desc: '常规加分 +30' },
-        { label: '45声望', opt: '67108933', desc: '较高加分 +45' },
-        { label: '75声望', opt: '67108884', desc: '高额加分 +75' },
-        { label: '15(无通知)', opt: '100663317', desc: '+15 不发送通知' },
-        { label: '30(无通知)', opt: '100663332', desc: '+30 不发送通知' },
-        { label: '活动补分15', opt: '67108885', desc: '活动补分专用' }
-    ];
+    // 评分操作opt位域（来自js_admin.js的adminui.addpoint）
+    var OPT_BASE = 4194304;    // act=加减声望模式
+    var OPT_MONEY = 1;         // 增加/扣除金钱
+    var OPT_PRESTIGE = 2;      // 增加威望
+    var OPT_PM = 4;            // 给作者发送PM
 
     // ===================================
     // 工具函数
@@ -278,51 +273,6 @@
     }
 
     // ===================================
-    // GBK编码（NGA服务端需要GBK编码的中文参数）
-    // ===================================
-    function encodeGBKPercent(str) {
-        // 如果字符串只包含ASCII字符，直接返回
-        if (/^[\x00-\x7F]*$/.test(str)) {
-            return encodeURIComponent(str);
-        }
-        // 使用Blob API进行GBK编码（同步不支持，使用异步）
-        // 返回Promise以便调用方await
-        return new Promise(function(resolve) {
-            try {
-                var blob = new Blob([str], { type: 'text/plain;charset=GBK' });
-                var reader = new FileReader();
-                reader.onload = function() {
-                    var bytes = new Uint8Array(reader.result);
-                    var result = '';
-                    for (var i = 0; i < bytes.length; i++) {
-                        var b = bytes[i];
-                        // 保留未编码的字符: A-Z a-z 0-9 - _ . ~
-                        if ((b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) ||
-                            (b >= 0x30 && b <= 0x39) || b === 0x2D || b === 0x5F ||
-                            b === 0x2E || b === 0x7E) {
-                            result += String.fromCharCode(b);
-                        } else if (b === 0x20) {
-                            result += '+';
-                        } else {
-                            var hex = b.toString(16).toUpperCase();
-                            result += '%' + (hex.length === 1 ? '0' : '') + hex;
-                        }
-                    }
-                    resolve(result);
-                };
-                reader.onerror = function() {
-                    // 降级使用UTF-8编码
-                    resolve(encodeURIComponent(str));
-                };
-                reader.readAsArrayBuffer(blob);
-            } catch (e) {
-                // 降级使用UTF-8编码
-                resolve(encodeURIComponent(str));
-            }
-        });
-    }
-
-    // ===================================
     // 获取页面参数
     // ===================================
     function getCurrentPage() {
@@ -383,8 +333,17 @@
         processedFloors: [],
         settings: null,
 
+        // 构建opt（根据开关设置组合位域，来自js_admin.js的adminui.addpoint）
+        buildOpt: function(settings) {
+            var opt = OPT_BASE; // act=加减声望模式
+            if (settings.addMoney !== false) opt |= OPT_MONEY;
+            if (settings.addPrestige !== false) opt |= OPT_PRESTIGE;
+            if (settings.sendPM !== false) opt |= OPT_PM;
+            return opt;
+        },
+
         // 对单个楼层加分
-        scoreFloor: function(pid, floor, fid, tid, opt, encodedInfo) {
+        scoreFloor: function(pid, floor, fid, tid, opt, reason, valueParam) {
             var self = this;
             return new Promise(function(resolve, reject) {
                 var xhr = new XMLHttpRequest();
@@ -392,15 +351,18 @@
                 xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
                 xhr.timeout = 15000;
 
-                // encodedInfo应该已经是GBK编码后的字符串，如果不是则降级使用UTF-8
-                var infoEncoded = encodedInfo || '';
+                // 对加分说明进行UrlEncode编码
+                var infoEncoded = encodeURIComponent(reason || '');
+                // value参数：自定义声望值（正数加分，负数扣分）
+                var scoreValue = valueParam || '0';
                 var params = '__lib=add_point_v3&__act=add' +
-                    '&opt=' + encodeURIComponent(opt) +
+                    '&opt=' + opt +
                     '&fid=' + encodeURIComponent(fid) +
                     '&tid=' + encodeURIComponent(tid) +
                     '&pid=' + encodeURIComponent(pid) +
                     '&info=' + infoEncoded +
-                    '&value=&raw=3';
+                    '&value=' + encodeURIComponent(scoreValue) +
+                    '&raw=3';
 
                 xhr.onload = function() {
                     if (xhr.status === 200) {
@@ -450,13 +412,10 @@
                 return Promise.reject(new Error('请先设置目标帖子TID'));
             }
 
-            // 获取opt值
-            var opt;
-            if (settings.scoreMode === 'custom' && settings.customOpt) {
-                opt = settings.customOpt;
-            } else {
-                opt = settings.scoreAmount;
-            }
+            // 根据开关构建opt位域
+            var opt = self.buildOpt(settings);
+            // value参数：自定义声望值
+            var scoreValue = settings.scoreValue || '0';
 
             var floors = getCurrentPageFloors();
             var currentPage = getCurrentPage();
@@ -505,7 +464,7 @@
 
                 addScoreLogEntry('info', '正在加分: 楼层#' + floor.floor + ' (PID:' + floor.pid + ')...');
 
-                return self.scoreFloor(floor.pid, floor.floor, fid, tid, opt, settings.encodedReason || encodeURIComponent(settings.reason))
+                return self.scoreFloor(floor.pid, floor.floor, fid, tid, opt, settings.reason, scoreValue)
                     .then(function(resp) {
                         addScoreLogEntry('success', '楼层#' + floor.floor + ' (PID:' + floor.pid + ') 加分成功!');
                         self.processedFloors.push(floor.floor);
@@ -572,7 +531,7 @@
             clearScoreLog();
             clearLogUI();
 
-            // 保存设置（encodedReason将在编码完成后更新）
+            // 保存设置
             saveScoreSettings(settings);
 
             // 保存初始运行状态
@@ -590,7 +549,9 @@
 
             addScoreLogEntry('info', '========== 批量加分开始 ==========');
             addScoreLogEntry('info', '目标TID: ' + settings.tid);
-            addScoreLogEntry('info', '加分opt: ' + (settings.scoreMode === 'custom' ? settings.customOpt : settings.scoreAmount));
+            var startOpt = self.buildOpt(settings);
+            addScoreLogEntry('info', '声望值: ' + settings.scoreValue);
+            addScoreLogEntry('info', '加分opt: ' + startOpt + ' (金钱:' + (settings.addMoney !== false) + ' 威望:' + (settings.addPrestige !== false) + ' PM:' + (settings.sendPM !== false) + ')');
             addScoreLogEntry('info', '加分理由: ' + (settings.reason || '(未设置)'));
             if (settings.maxPages > 0) {
                 addScoreLogEntry('info', '最大页数: ' + settings.maxPages);
@@ -599,63 +560,27 @@
                 addScoreLogEntry('info', '停止楼层: #' + settings.stopFloor);
             }
 
-            // 对加分理由进行GBK编码（异步），然后开始加分
-            var reason = settings.reason || '';
-            addScoreLogEntry('info', '正在编码加分理由...');
+            // 如果当前页面不是目标帖子页面，先导航过去
+            var currentTid = getCurrentTid();
+            var currentPage = getCurrentPage();
 
-            encodeGBKPercent(reason).then(function(encoded) {
-                // 存储编码后的理由
-                self.settings.encodedReason = encoded;
-                settings.encodedReason = encoded;
-                saveScoreSettings(settings);
-                addScoreLogEntry('info', '加分理由编码完成');
+            if (currentTid !== parseInt(settings.tid) || currentPage !== 1) {
+                // 更新运行状态为目标页面
+                saveRunningState({
+                    tid: parseInt(settings.tid),
+                    currentPage: 1,
+                    totalPagesProcessed: 0,
+                    processedFloors: [],
+                    processedCount: 0,
+                    startTime: Date.now()
+                });
+                addScoreLogEntry('info', '正在跳转到目标帖子第1页...');
+                self.navigateToPage(settings.tid, 1);
+                return; // 页面跳转后会通过resume继续
+            }
 
-                // 如果当前页面不是目标帖子页面，先导航过去
-                var currentTid = getCurrentTid();
-                var currentPage = getCurrentPage();
-
-                if (currentTid !== parseInt(settings.tid) || currentPage !== 1) {
-                    // 更新运行状态为目标页面
-                    saveRunningState({
-                        tid: parseInt(settings.tid),
-                        currentPage: 1,
-                        totalPagesProcessed: 0,
-                        processedFloors: [],
-                        processedCount: 0,
-                        startTime: Date.now()
-                    });
-                    addScoreLogEntry('info', '正在跳转到目标帖子第1页...');
-                    self.navigateToPage(settings.tid, 1);
-                    return; // 页面跳转后会通过resume继续
-                }
-
-                // 开始处理当前页
-                self._runPageLoop(parseInt(settings.tid), 1, 1);
-            }).catch(function(err) {
-                // 编码失败，使用UTF-8降级
-                addScoreLogEntry('error', 'GBK编码失败，使用UTF-8降级: ' + err.message);
-                self.settings.encodedReason = encodeURIComponent(reason);
-                settings.encodedReason = self.settings.encodedReason;
-                saveScoreSettings(settings);
-
-                var currentTid = getCurrentTid();
-                var currentPage = getCurrentPage();
-
-                if (currentTid !== parseInt(settings.tid) || currentPage !== 1) {
-                    saveRunningState({
-                        tid: parseInt(settings.tid),
-                        currentPage: 1,
-                        totalPagesProcessed: 0,
-                        processedFloors: [],
-                        processedCount: 0,
-                        startTime: Date.now()
-                    });
-                    addScoreLogEntry('info', '正在跳转到目标帖子第1页...');
-                    self.navigateToPage(settings.tid, 1);
-                    return;
-                }
-                self._runPageLoop(parseInt(settings.tid), 1, 1);
-            });
+            // 开始处理当前页
+            self._runPageLoop(parseInt(settings.tid), 1, 1);
         },
 
         // 页面循环处理
@@ -797,11 +722,6 @@
             var settings = loadScoreSettings();
             self.settings = settings;
 
-            // 如果encodedReason不存在（旧版本兼容），使用UTF-8编码降级
-            if (!settings.encodedReason && settings.reason) {
-                settings.encodedReason = encodeURIComponent(settings.reason);
-            }
-
             var currentTid = getCurrentTid();
             if (currentTid !== runningState.tid) {
                 // 不在目标帖子页面，可能是用户手动导航走了，等待用户返回
@@ -879,15 +799,14 @@
                             '<p style="color:#8b6914;">⚠ 加分完成后请及时关闭本工具，避免误操作。</p>' +
                         '</div>' +
                         '<div class="warden-section">' +
-                            '<h3>加分opt预设说明</h3>' +
-                            '<p>不同opt值对应不同的加分数量和通知方式:</p>' +
-                            '<p>• <b>67108885</b>: 15声望 (有通知)</p>' +
-                            '<p>• <b>67108901</b>: 30声望 (有通知)</p>' +
-                            '<p>• <b>67108933</b>: 45声望 (有通知)</p>' +
-                            '<p>• <b>67108884</b>: 75声望 (有通知)</p>' +
-                            '<p>• <b>100663317</b>: 15声望 (无通知)</p>' +
-                            '<p>• <b>100663332</b>: 30声望 (无通知)</p>' +
-                            '<p style="margin-top:6px;color:#8b6914;">如上述预设不满足需求，可在"自定义opt"模式下直接输入opt值。</p>' +
+                            '<h3>评分参数说明</h3>' +
+                            '<p>基于NGA版主评分接口 (<b>js_admin.js</b> 的 adminui.addpoint)：</p>' +
+                            '<p>• <b>声望值</b>：正数=加分，负数=扣分，范围-1500~1500</p>' +
+                            '<p>• <b>opt</b>：操作位域 = 4194304(加减声望) + 1(金钱) + 2(威望) + 4(PM)</p>' +
+                            '<p>• <b>value</b>：自定义声望值（即声望值输入框的值）</p>' +
+                            '<p style="margin-top:6px;color:#8b6914;">• 增加/扣除金钱：100声望合1金币</p>' +
+                            '<p style="color:#8b6914;">• 增加威望：150声望合1威望</p>' +
+                            '<p style="color:#8b6914;">• 给作者发送PM：勾选后给用户发送通知私信</p>' +
                         '</div>' +
                     '</div>' +
                 '</div>' +
@@ -909,39 +828,46 @@
         html += '<button class="warden-btn" id="warden-btn-get-tid" title="自动获取当前页面的帖子TID" style="flex:0 0 auto;">获取TID</button>';
         html += '</div>';
 
-        // 加分模式选择
+        // 声望值（自定义加减）
         html += '<div class="warden-form-row">';
-        html += '<label>加分模式:</label>';
-        html += '<select class="warden-input warden-input-short" id="warden-score-mode" style="width:auto;">';
-        html += '<option value="preset">预设opt</option>';
-        html += '<option value="custom">自定义opt</option>';
-        html += '</select>';
+        html += '<label>声望值:</label>';
+        html += '<input type="number" class="warden-input warden-input-short" id="warden-score-value" value="30" min="-1500" max="1500" step="1" title="正数加分，负数扣分，范围-1500~1500">';
+        html += '<span style="font-size:11px;color:#8b6914;">正数=加分，负数=扣分 (-1500~1500)</span>';
         html += '</div>';
 
-        // 预设opt选择（默认显示）
-        html += '<div class="warden-form-row" id="warden-preset-row">';
-        html += '<label>加分数值:</label>';
-        html += '<select class="warden-input" id="warden-score-preset" style="width:auto;">';
-        for (var i = 0; i < SCORE_PRESETS.length; i++) {
-            var preset = SCORE_PRESETS[i];
-            html += '<option value="' + preset.opt + '"' + (preset.opt === '67108901' ? ' selected' : '') + '>' + preset.label + ' (opt:' + preset.opt + ')</option>';
-        }
-        html += '</select>';
-        html += '<span style="font-size:11px;color:#8b6914;">';
-
-        html += '</span>';
+        // 增加/扣除金钱 开关
+        html += '<div class="warden-form-row">';
+        html += '<label>增加/扣除金钱:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-score-money" checked>';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
+        html += '<span style="font-size:11px;color:#8b6914;">100声望合1金币，扣减声望时可扣除金钱</span>';
         html += '</div>';
 
-        // 自定义opt输入（默认隐藏）
-        html += '<div class="warden-form-row" id="warden-custom-opt-row" style="display:none;">';
-        html += '<label>自定义opt:</label>';
-        html += '<input type="text" class="warden-input" id="warden-score-custom-opt" placeholder="输入自定义opt值，如 100663332">';
+        // 增加威望 开关
+        html += '<div class="warden-form-row">';
+        html += '<label>增加威望:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-score-prestige" checked>';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
+        html += '<span style="font-size:11px;color:#8b6914;">150声望合1威望</span>';
+        html += '</div>';
+
+        // 给作者发送PM 开关
+        html += '<div class="warden-form-row">';
+        html += '<label>给作者发送PM:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-score-pm" checked>';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
         html += '</div>';
 
         // 加分理由
         html += '<div class="warden-form-row">';
-        html += '<label>加分理由:</label>';
-        html += '<input type="text" class="warden-input" id="warden-score-reason" placeholder="输入加分理由(如: 活动奖励)" title="将被记录在加分操作的原因中">';
+        html += '<label>加分说明:</label>';
+        html += '<input type="text" class="warden-input" id="warden-score-reason" placeholder="输入加分说明(如: 活动奖励)" title="将被记录在加分操作的info字段中，自动GBK编码">';
         html += '</div>';
 
         // 加分间隔
@@ -1146,66 +1072,43 @@
     function loadSettingsToForm() {
         var settings = loadScoreSettings();
         var tidEl = document.getElementById('warden-score-tid');
-        var modeEl = document.getElementById('warden-score-mode');
-        var presetEl = document.getElementById('warden-score-preset');
-        var customOptEl = document.getElementById('warden-score-custom-opt');
+        var valueEl = document.getElementById('warden-score-value');
+        var moneyEl = document.getElementById('warden-score-money');
+        var prestigeEl = document.getElementById('warden-score-prestige');
+        var pmEl = document.getElementById('warden-score-pm');
         var reasonEl = document.getElementById('warden-score-reason');
         var delayEl = document.getElementById('warden-score-delay');
         var maxPagesEl = document.getElementById('warden-score-maxpages');
         var stopFloorEl = document.getElementById('warden-score-stopfloor');
 
         if (tidEl) tidEl.value = settings.tid || '';
-        if (modeEl) modeEl.value = settings.scoreMode || 'preset';
-        if (presetEl) {
-            // 尝试匹配预设值
-            for (var i = 0; i < presetEl.options.length; i++) {
-                if (presetEl.options[i].value === settings.scoreAmount) {
-                    presetEl.selectedIndex = i;
-                    break;
-                }
-            }
-        }
-        if (customOptEl) customOptEl.value = settings.customOpt || '';
+        if (valueEl) valueEl.value = settings.scoreValue || '30';
+        if (moneyEl) moneyEl.checked = settings.addMoney !== false;
+        if (prestigeEl) prestigeEl.checked = settings.addPrestige !== false;
+        if (pmEl) pmEl.checked = settings.sendPM !== false;
         if (reasonEl) reasonEl.value = settings.reason || '';
         if (delayEl) delayEl.value = settings.delay || 50;
         if (maxPagesEl) maxPagesEl.value = settings.maxPages || 0;
         if (stopFloorEl) stopFloorEl.value = settings.stopFloor || 0;
-
-        // 切换模式显示
-        toggleScoreModeUI(settings.scoreMode || 'preset');
-    }
-
-    function toggleScoreModeUI(mode) {
-        var presetRow = document.getElementById('warden-preset-row');
-        var customOptRow = document.getElementById('warden-custom-opt-row');
-        if (mode === 'custom') {
-            if (presetRow) presetRow.style.display = 'none';
-            if (customOptRow) customOptRow.style.display = 'flex';
-        } else {
-            if (presetRow) presetRow.style.display = 'flex';
-            if (customOptRow) customOptRow.style.display = 'none';
-        }
     }
 
     function collectSettingsFromForm() {
         var settings = loadScoreSettings();
         var tidEl = document.getElementById('warden-score-tid');
-        var modeEl = document.getElementById('warden-score-mode');
-        var presetEl = document.getElementById('warden-score-preset');
-        var customOptEl = document.getElementById('warden-score-custom-opt');
+        var valueEl = document.getElementById('warden-score-value');
+        var moneyEl = document.getElementById('warden-score-money');
+        var prestigeEl = document.getElementById('warden-score-prestige');
+        var pmEl = document.getElementById('warden-score-pm');
         var reasonEl = document.getElementById('warden-score-reason');
         var delayEl = document.getElementById('warden-score-delay');
         var maxPagesEl = document.getElementById('warden-score-maxpages');
         var stopFloorEl = document.getElementById('warden-score-stopfloor');
 
         settings.tid = tidEl ? tidEl.value.trim() : '';
-        settings.scoreMode = modeEl ? modeEl.value : 'preset';
-        if (settings.scoreMode === 'custom') {
-            settings.customOpt = customOptEl ? customOptEl.value.trim() : '';
-            settings.scoreAmount = settings.customOpt;
-        } else {
-            settings.scoreAmount = presetEl ? presetEl.value : '67108901';
-        }
+        settings.scoreValue = valueEl ? valueEl.value.trim() : '0';
+        settings.addMoney = moneyEl ? moneyEl.checked : true;
+        settings.addPrestige = prestigeEl ? prestigeEl.checked : true;
+        settings.sendPM = pmEl ? pmEl.checked : true;
         settings.reason = reasonEl ? reasonEl.value.trim() : '';
         settings.delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
         settings.maxPages = maxPagesEl ? parseInt(maxPagesEl.value) || 0 : 0;
@@ -1298,14 +1201,6 @@
             if (!isNaN(idx)) switchTab(idx);
         });
 
-        // 加分模式切换
-        var modeSelect = document.getElementById('warden-score-mode');
-        if (modeSelect) {
-            modeSelect.addEventListener('change', function() {
-                toggleScoreModeUI(this.value);
-            });
-        }
-
         // 获取TID按钮
         var getTidBtn = document.getElementById('warden-btn-get-tid');
         if (getTidBtn) {
@@ -1331,8 +1226,8 @@
                     alert('请先输入目标帖子TID！');
                     return;
                 }
-                if (settings.scoreMode === 'custom' && !settings.customOpt) {
-                    alert('请先输入自定义opt值！');
+                if (!settings.scoreValue || settings.scoreValue === '0') {
+                    alert('请输入有效的声望值（非零值）！');
                     return;
                 }
                 log('启动批量加分', settings);
