@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/
-// @version      1.0.0
+// @version      1.0.1
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -145,10 +145,11 @@
         scoreAmount: '30', // 加分数值（opt预设或自定义opt值）
         scoreMode: 'preset', // 'preset' 使用预设 | 'custom' 自定义opt
         customOpt: '',     // 自定义opt值
-        reason: '',        // 加分理由
+        reason: '',        // 加分理由（原始中文）
+        encodedReason: '', // 加分理由（GBK编码后）
         maxPages: 0,       // 最大加分页数，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
-        delay: 500         // 每次加分间隔(ms)
+        delay: 50          // 每次加分间隔(ms)
     };
 
     // 预设加分选项: { label: '显示名', opt: 'opt值', desc: '描述' }
@@ -277,6 +278,51 @@
     }
 
     // ===================================
+    // GBK编码（NGA服务端需要GBK编码的中文参数）
+    // ===================================
+    function encodeGBKPercent(str) {
+        // 如果字符串只包含ASCII字符，直接返回
+        if (/^[\x00-\x7F]*$/.test(str)) {
+            return encodeURIComponent(str);
+        }
+        // 使用Blob API进行GBK编码（同步不支持，使用异步）
+        // 返回Promise以便调用方await
+        return new Promise(function(resolve) {
+            try {
+                var blob = new Blob([str], { type: 'text/plain;charset=GBK' });
+                var reader = new FileReader();
+                reader.onload = function() {
+                    var bytes = new Uint8Array(reader.result);
+                    var result = '';
+                    for (var i = 0; i < bytes.length; i++) {
+                        var b = bytes[i];
+                        // 保留未编码的字符: A-Z a-z 0-9 - _ . ~
+                        if ((b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) ||
+                            (b >= 0x30 && b <= 0x39) || b === 0x2D || b === 0x5F ||
+                            b === 0x2E || b === 0x7E) {
+                            result += String.fromCharCode(b);
+                        } else if (b === 0x20) {
+                            result += '+';
+                        } else {
+                            var hex = b.toString(16).toUpperCase();
+                            result += '%' + (hex.length === 1 ? '0' : '') + hex;
+                        }
+                    }
+                    resolve(result);
+                };
+                reader.onerror = function() {
+                    // 降级使用UTF-8编码
+                    resolve(encodeURIComponent(str));
+                };
+                reader.readAsArrayBuffer(blob);
+            } catch (e) {
+                // 降级使用UTF-8编码
+                resolve(encodeURIComponent(str));
+            }
+        });
+    }
+
+    // ===================================
     // 获取页面参数
     // ===================================
     function getCurrentPage() {
@@ -338,7 +384,7 @@
         settings: null,
 
         // 对单个楼层加分
-        scoreFloor: function(pid, floor, fid, tid, opt, info) {
+        scoreFloor: function(pid, floor, fid, tid, opt, encodedInfo) {
             var self = this;
             return new Promise(function(resolve, reject) {
                 var xhr = new XMLHttpRequest();
@@ -346,12 +392,14 @@
                 xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
                 xhr.timeout = 15000;
 
+                // encodedInfo应该已经是GBK编码后的字符串，如果不是则降级使用UTF-8
+                var infoEncoded = encodedInfo || '';
                 var params = '__lib=add_point_v3&__act=add' +
                     '&opt=' + encodeURIComponent(opt) +
                     '&fid=' + encodeURIComponent(fid) +
                     '&tid=' + encodeURIComponent(tid) +
                     '&pid=' + encodeURIComponent(pid) +
-                    '&info=' + encodeURIComponent(info) +
+                    '&info=' + infoEncoded +
                     '&value=&raw=3';
 
                 xhr.onload = function() {
@@ -457,7 +505,7 @@
 
                 addScoreLogEntry('info', '正在加分: 楼层#' + floor.floor + ' (PID:' + floor.pid + ')...');
 
-                return self.scoreFloor(floor.pid, floor.floor, fid, tid, opt, settings.reason)
+                return self.scoreFloor(floor.pid, floor.floor, fid, tid, opt, settings.encodedReason || encodeURIComponent(settings.reason))
                     .then(function(resp) {
                         addScoreLogEntry('success', '楼层#' + floor.floor + ' (PID:' + floor.pid + ') 加分成功!');
                         self.processedFloors.push(floor.floor);
@@ -518,17 +566,20 @@
             self.stopRequested = false;
             self.processedFloors = [];
             self.currentPage = 0;
+            self.totalPagesProcessed = 0;  // 累计已处理页数
 
-            // 保存设置
+            // 清除旧日志（每次启动新加分任务时清空日志）
+            clearScoreLog();
+            clearLogUI();
+
+            // 保存设置（encodedReason将在编码完成后更新）
             saveScoreSettings(settings);
 
-            // 清除旧日志
-            clearScoreLog();
-
-            // 保存运行状态
+            // 保存初始运行状态
             saveRunningState({
                 tid: parseInt(settings.tid),
                 currentPage: 0,
+                totalPagesProcessed: 0,
                 processedFloors: [],
                 processedCount: 0,
                 startTime: Date.now()
@@ -536,7 +587,6 @@
 
             // 显示状态栏
             updateScoreStatusUI('running', '准备开始批量加分...');
-            clearLogUI();
 
             addScoreLogEntry('info', '========== 批量加分开始 ==========');
             addScoreLogEntry('info', '目标TID: ' + settings.tid);
@@ -549,33 +599,72 @@
                 addScoreLogEntry('info', '停止楼层: #' + settings.stopFloor);
             }
 
-            // 如果当前页面不是目标帖子页面，先导航过去
-            var currentTid = getCurrentTid();
-            var currentPage = getCurrentPage();
+            // 对加分理由进行GBK编码（异步），然后开始加分
+            var reason = settings.reason || '';
+            addScoreLogEntry('info', '正在编码加分理由...');
 
-            if (currentTid !== parseInt(settings.tid) || currentPage !== 1) {
-                // 更新运行状态为目标页面
-                saveRunningState({
-                    tid: parseInt(settings.tid),
-                    currentPage: 1,
-                    processedFloors: [],
-                    processedCount: 0,
-                    startTime: Date.now()
-                });
-                addScoreLogEntry('info', '正在跳转到目标帖子第1页...');
-                self.navigateToPage(settings.tid, 1);
-                return; // 页面跳转后会通过resume继续
-            }
+            encodeGBKPercent(reason).then(function(encoded) {
+                // 存储编码后的理由
+                self.settings.encodedReason = encoded;
+                settings.encodedReason = encoded;
+                saveScoreSettings(settings);
+                addScoreLogEntry('info', '加分理由编码完成');
 
-            // 开始处理当前页
-            self._runPageLoop(parseInt(settings.tid), 1);
+                // 如果当前页面不是目标帖子页面，先导航过去
+                var currentTid = getCurrentTid();
+                var currentPage = getCurrentPage();
+
+                if (currentTid !== parseInt(settings.tid) || currentPage !== 1) {
+                    // 更新运行状态为目标页面
+                    saveRunningState({
+                        tid: parseInt(settings.tid),
+                        currentPage: 1,
+                        totalPagesProcessed: 0,
+                        processedFloors: [],
+                        processedCount: 0,
+                        startTime: Date.now()
+                    });
+                    addScoreLogEntry('info', '正在跳转到目标帖子第1页...');
+                    self.navigateToPage(settings.tid, 1);
+                    return; // 页面跳转后会通过resume继续
+                }
+
+                // 开始处理当前页
+                self._runPageLoop(parseInt(settings.tid), 1, 1);
+            }).catch(function(err) {
+                // 编码失败，使用UTF-8降级
+                addScoreLogEntry('error', 'GBK编码失败，使用UTF-8降级: ' + err.message);
+                self.settings.encodedReason = encodeURIComponent(reason);
+                settings.encodedReason = self.settings.encodedReason;
+                saveScoreSettings(settings);
+
+                var currentTid = getCurrentTid();
+                var currentPage = getCurrentPage();
+
+                if (currentTid !== parseInt(settings.tid) || currentPage !== 1) {
+                    saveRunningState({
+                        tid: parseInt(settings.tid),
+                        currentPage: 1,
+                        totalPagesProcessed: 0,
+                        processedFloors: [],
+                        processedCount: 0,
+                        startTime: Date.now()
+                    });
+                    addScoreLogEntry('info', '正在跳转到目标帖子第1页...');
+                    self.navigateToPage(settings.tid, 1);
+                    return;
+                }
+                self._runPageLoop(parseInt(settings.tid), 1, 1);
+            });
         },
 
         // 页面循环处理
-        _runPageLoop: function(tid, startPage) {
+        // currentPage: 当前URL所在的页码
+        // pagesProcessedSoFar: 本次_runPageLoop调用前已处理的累计页数
+        _runPageLoop: function(tid, currentPage, pagesProcessedSoFar) {
             var self = this;
             var settings = self.settings;
-            var currentPage = startPage;
+            var pagesDone = pagesProcessedSoFar || 0;
 
             function processPage() {
                 if (self.stopRequested) {
@@ -587,24 +676,26 @@
                     return;
                 }
 
-                // 检查页数限制
-                if (settings.maxPages > 0 && (currentPage - startPage + 1) > settings.maxPages) {
+                // 检查页数限制（在处理当前页之前检查）
+                if (settings.maxPages > 0 && pagesDone >= settings.maxPages) {
                     self.isRunning = false;
                     clearRunningState();
                     updateScoreStatusUI('done', '批量加分完成！已达到最大页数限制(' + settings.maxPages + '页)');
-                    addScoreLogEntry('info', '========== 批量加分完成(达到页数限制) ==========');
+                    addScoreLogEntry('info', '========== 批量加分完成(达到页数限制，共处理' + pagesDone + '页) ==========');
                     updateControlButtons(false);
                     return;
                 }
 
                 self.currentPage = currentPage;
-                updateScoreStatusUI('running', '正在处理第 ' + currentPage + ' 页...');
-                addScoreLogEntry('info', '--- 开始处理第 ' + currentPage + ' 页 ---');
+                self.totalPagesProcessed = pagesDone;
+                updateScoreStatusUI('running', '正在处理第 ' + currentPage + ' 页 (累计已处理' + pagesDone + '页)...');
+                addScoreLogEntry('info', '--- 开始处理第 ' + currentPage + ' 页 (累计第' + (pagesDone + 1) + '页) ---');
 
-                // 更新运行状态
+                // 更新运行状态（track累计页数）
                 saveRunningState({
                     tid: tid,
                     currentPage: currentPage,
+                    totalPagesProcessed: pagesDone,
                     processedFloors: self.processedFloors,
                     processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0)
                 });
@@ -620,7 +711,6 @@
                         }
 
                         if (result.reachedStopFloor) {
-                            // 到达停止楼层
                             self.isRunning = false;
                             clearRunningState();
                             updateScoreStatusUI('done', '批量加分完成！已到达指定楼层');
@@ -631,10 +721,22 @@
 
                         addScoreLogEntry('info', '第 ' + currentPage + ' 页处理完成: 成功' + result.processed + '条, 失败' + result.errors + '条');
 
+                        // 当前页处理完毕，累计+1
+                        var newPagesDone = pagesDone + 1;
+
+                        // 检查页数限制（当前页处理完后检查）
+                        if (settings.maxPages > 0 && newPagesDone >= settings.maxPages) {
+                            self.isRunning = false;
+                            clearRunningState();
+                            updateScoreStatusUI('done', '批量加分完成！已达到最大页数限制(' + settings.maxPages + '页)');
+                            addScoreLogEntry('info', '========== 批量加分完成(达到页数限制，共处理' + newPagesDone + '页) ==========');
+                            updateControlButtons(false);
+                            return;
+                        }
+
                         // 检查是否有更多页
                         var floors = getCurrentPageFloors();
                         if (floors.length === 0 && result.processed === 0) {
-                            // 没有更多楼层了，可能是最后一页
                             self.isRunning = false;
                             clearRunningState();
                             updateScoreStatusUI('done', '批量加分完成！已处理到最后一页');
@@ -667,10 +769,11 @@
                         saveRunningState({
                             tid: tid,
                             currentPage: nextPage,
+                            totalPagesProcessed: newPagesDone,
                             processedFloors: self.processedFloors,
                             processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0)
                         });
-                        addScoreLogEntry('info', '正在跳转到第 ' + nextPage + ' 页...');
+                        addScoreLogEntry('info', '正在跳转到第 ' + nextPage + ' 页 (已累计处理' + newPagesDone + '页)...');
                         self.navigateToPage(tid, nextPage);
                     })
                     .catch(function(err) {
@@ -694,6 +797,11 @@
             var settings = loadScoreSettings();
             self.settings = settings;
 
+            // 如果encodedReason不存在（旧版本兼容），使用UTF-8编码降级
+            if (!settings.encodedReason && settings.reason) {
+                settings.encodedReason = encodeURIComponent(settings.reason);
+            }
+
             var currentTid = getCurrentTid();
             if (currentTid !== runningState.tid) {
                 // 不在目标帖子页面，可能是用户手动导航走了，等待用户返回
@@ -704,21 +812,25 @@
             // 使用URL中的当前页码（我们已经导航到这个页面了）
             var currentPageFromUrl = getCurrentPage();
             var resumePage = currentPageFromUrl || runningState.currentPage || 1;
+            // 累计已处理的页数（跨页面跟踪）
+            var pagesDone = runningState.totalPagesProcessed || 0;
 
             self.isRunning = true;
             self.stopRequested = false;
             self.processedFloors = runningState.processedFloors || [];
             self.currentPage = resumePage;
+            self.totalPagesProcessed = pagesDone;
 
             addScoreLogEntry('info', '========== 恢复批量加分 ==========');
-            addScoreLogEntry('info', '继续处理第 ' + resumePage + ' 页');
+            addScoreLogEntry('info', '继续处理第 ' + resumePage + ' 页 (累计已处理' + pagesDone + '页)');
 
-            // 更新UI状态
+            // 仅当面板已打开时才更新UI状态（防止自动弹出面板）
+            // updateScoreStatusUI 内置 isPanelVisible() 检查
             updateScoreStatusUI('running', '正在恢复批量加分...');
             updateControlButtons(true);
 
-            // 继续从当前页处理
-            self._runPageLoop(runningState.tid, resumePage);
+            // 继续从当前页处理，传递累计页数
+            self._runPageLoop(runningState.tid, resumePage, pagesDone);
             return true;
         },
 
@@ -727,9 +839,9 @@
             this.stopRequested = true;
             this.isRunning = false;
             clearRunningState();
-            updateScoreStatusUI('stopped', '正在停止...');
+            updateScoreStatusUIForce('stopped', '正在停止...');
             addScoreLogEntry('info', '========== 收到停止指令 ==========');
-            updateControlButtons(false);
+            updateControlButtonsForce(false);
         }
     };
 
@@ -794,6 +906,7 @@
         html += '<div class="warden-form-row">';
         html += '<label>TID (帖子ID):</label>';
         html += '<input type="text" class="warden-input" id="warden-score-tid" placeholder="输入目标帖子TID" title="要加分的帖子ID，可从URL中获取(如read.php?tid=123456)">';
+        html += '<button class="warden-btn" id="warden-btn-get-tid" title="自动获取当前页面的帖子TID" style="flex:0 0 auto;">获取TID</button>';
         html += '</div>';
 
         // 加分模式选择
@@ -834,8 +947,8 @@
         // 加分间隔
         html += '<div class="warden-form-row">';
         html += '<label>加分间隔(ms):</label>';
-        html += '<input type="number" class="warden-input warden-input-short" id="warden-score-delay" value="500" min="100" max="5000" step="100" title="每次加分之间的延迟时间，建议500-1000ms">';
-        html += '<span style="font-size:11px;color:#8b6914;">建议500-1000ms，太快可能被限制</span>';
+        html += '<input type="number" class="warden-input warden-input-short" id="warden-score-delay" value="50" min="50" max="5000" step="50" title="每次加分之间的延迟时间，建议50-1000ms">';
+        html += '<span style="font-size:11px;color:#8b6914;">建议50-1000ms，太快可能被限制</span>';
         html += '</div>';
 
         // 停止条件
@@ -937,7 +1050,14 @@
     // ===================================
     // UI: 更新函数
     // ===================================
+    function isPanelVisible() {
+        var overlay = document.getElementById('nga-warden-overlay');
+        return overlay && overlay.classList.contains('show');
+    }
+
     function updateScoreStatusUI(state, message) {
+        // 仅当面板可见时才更新UI，防止自动弹出面板
+        if (!isPanelVisible()) return;
         var statusEl = document.getElementById('nga-warden-score-status');
         var textEl = document.getElementById('warden-score-status-text');
         var countEl = document.getElementById('warden-score-status-count');
@@ -952,7 +1072,32 @@
         }
     }
 
+    // 无条件更新UI（用于用户手动操作时）
+    function updateScoreStatusUIForce(state, message) {
+        var statusEl = document.getElementById('nga-warden-score-status');
+        var textEl = document.getElementById('warden-score-status-text');
+        var countEl = document.getElementById('warden-score-status-count');
+
+        if (statusEl) {
+            statusEl.className = state;
+            statusEl.style.display = 'block';
+        }
+        if (textEl) textEl.textContent = message;
+        if (countEl && SCORE_ENGINE.isRunning) {
+            countEl.textContent = '已处理: ' + SCORE_ENGINE.processedFloors.length + ' 个楼层';
+        }
+    }
+
     function updateControlButtons(isRunning) {
+        // 仅当面板可见时才更新UI
+        if (!isPanelVisible()) return;
+        var startBtn = document.getElementById('warden-btn-start');
+        var stopBtn = document.getElementById('warden-btn-stop');
+        if (startBtn) startBtn.disabled = isRunning;
+        if (stopBtn) stopBtn.disabled = !isRunning;
+    }
+
+    function updateControlButtonsForce(isRunning) {
         var startBtn = document.getElementById('warden-btn-start');
         var stopBtn = document.getElementById('warden-btn-stop');
         if (startBtn) startBtn.disabled = isRunning;
@@ -960,6 +1105,7 @@
     }
 
     function appendLogToUI(type, message) {
+        // 日志始终追加（即使面板不可见），下次打开面板时可以看到
         var logEl = document.getElementById('nga-warden-score-log');
         if (!logEl) return;
         var line = document.createElement('div');
@@ -1021,7 +1167,7 @@
         }
         if (customOptEl) customOptEl.value = settings.customOpt || '';
         if (reasonEl) reasonEl.value = settings.reason || '';
-        if (delayEl) delayEl.value = settings.delay || 500;
+        if (delayEl) delayEl.value = settings.delay || 50;
         if (maxPagesEl) maxPagesEl.value = settings.maxPages || 0;
         if (stopFloorEl) stopFloorEl.value = settings.stopFloor || 0;
 
@@ -1061,7 +1207,7 @@
             settings.scoreAmount = presetEl ? presetEl.value : '67108901';
         }
         settings.reason = reasonEl ? reasonEl.value.trim() : '';
-        settings.delay = delayEl ? parseInt(delayEl.value) || 500 : 500;
+        settings.delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
         settings.maxPages = maxPagesEl ? parseInt(maxPagesEl.value) || 0 : 0;
         settings.stopFloor = stopFloorEl ? parseInt(stopFloorEl.value) || 0 : 0;
 
@@ -1080,14 +1226,34 @@
             loadSettingsToForm();
             updatePageInfoUI();
 
+            // 从localStorage恢复日志显示
+            restoreLogFromStorage();
+
             // 检查是否有正在运行的任务
             var runningState = loadRunningState();
             if (runningState) {
-                updateScoreStatusUI('running', '检测到未完成的加分任务');
-                addScoreLogEntry('info', '检测到未完成的加分任务(TID:' + runningState.tid + ', 当前第' + runningState.currentPage + '页)');
-                updateControlButtons(false); // 让用户决定是否继续
+                updateScoreStatusUIForce('running', '检测到未完成的加分任务(TID:' + runningState.tid + ', 当前第' + runningState.currentPage + '页)');
+                addScoreLogEntry('info', '检测到未完成的加分任务(TID:' + runningState.tid + ', 已处理' + (runningState.totalPagesProcessed || 0) + '页, 当前第' + runningState.currentPage + '页)');
+                updateControlButtonsForce(false); // 让用户决定是否继续
             }
         }
+    }
+
+    function restoreLogFromStorage() {
+        var logArr = loadScoreLog();
+        var logEl = document.getElementById('nga-warden-score-log');
+        if (!logEl || logArr.length === 0) return;
+        // 只在日志为空时恢复（避免重复）
+        if (logEl.children.length > 1) return;
+        logEl.innerHTML = '';
+        for (var i = 0; i < logArr.length; i++) {
+            var entry = logArr[i];
+            var line = document.createElement('div');
+            line.className = 'log-line ' + entry.type;
+            line.textContent = '[' + entry.time + '] ' + entry.message;
+            logEl.appendChild(line);
+        }
+        logEl.scrollTop = logEl.scrollHeight;
     }
 
     function hidePanel() {
@@ -1137,6 +1303,22 @@
         if (modeSelect) {
             modeSelect.addEventListener('change', function() {
                 toggleScoreModeUI(this.value);
+            });
+        }
+
+        // 获取TID按钮
+        var getTidBtn = document.getElementById('warden-btn-get-tid');
+        if (getTidBtn) {
+            getTidBtn.addEventListener('click', function() {
+                var tid = getCurrentTid();
+                var tidEl = document.getElementById('warden-score-tid');
+                if (tid) {
+                    if (tidEl) tidEl.value = tid;
+                    updatePageInfoUI();
+                    addScoreLogEntry('info', '已自动填入当前页面TID: ' + tid);
+                } else {
+                    alert('当前页面没有检测到TID，请确认在帖子页面中。');
+                }
             });
         }
 
