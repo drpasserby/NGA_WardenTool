@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/
-// @version      1.0.3
+// @version      1.0.4
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -22,7 +22,7 @@
     // ===================================
     // 日志工具
     // ===================================
-    var LOG_PREFIX = '[NGA版主管工具]';
+    var LOG_PREFIX = '[NGA版主管理工具]';
     function log(msg, data) {
         console.log(LOG_PREFIX, msg, data || '');
     }
@@ -156,7 +156,7 @@
         addPrestige: false,// 增加威望（默认关闭）
         sendPM: true,      // 给作者发送PM（默认开启）
         reason: '',        // 加分理由
-        maxPages: 0,       // 最大加分页数，0表示不限制
+        maxPages: 0,       // 加分页数量，包括当前页，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
         delay: 50          // 每次加分间隔(ms)
     };
@@ -534,7 +534,6 @@
             self.stopRequested = false;
             self.processedFloors = [];
             self.currentPage = 0;
-            self.totalPagesProcessed = 0;  // 累计已处理页数
 
             // 清除旧日志（每次启动新加分任务时清空日志）
             clearScoreLog();
@@ -542,16 +541,6 @@
 
             // 保存设置
             saveScoreSettings(settings);
-
-            // 保存初始运行状态
-            saveRunningState({
-                tid: parseInt(settings.tid),
-                currentPage: 0,
-                totalPagesProcessed: 0,
-                processedFloors: [],
-                processedCount: 0,
-                startTime: Date.now()
-            });
 
             // 显示状态栏
             updateScoreStatusUI('running', '准备开始批量加分...');
@@ -563,42 +552,41 @@
             addScoreLogEntry('info', '加分opt: ' + startOpt + ' (金钱:' + (settings.addMoney !== false) + ' 威望:' + (settings.addPrestige !== false) + ' PM:' + (settings.sendPM !== false) + ')');
             addScoreLogEntry('info', '加分理由: ' + (settings.reason || '(未设置)'));
             if (settings.maxPages > 0) {
-                addScoreLogEntry('info', '最大页数: ' + settings.maxPages);
+                addScoreLogEntry('info', '加分页数量: ' + settings.maxPages);
             }
             if (settings.stopFloor > 0) {
                 addScoreLogEntry('info', '停止楼层: #' + settings.stopFloor);
             }
 
-            // 如果当前页面不是目标帖子页面，先导航过去
+            // 确定起始页：如果在目标帖子页面则从当前页开始，否则跳转到第1页
             var currentTid = getCurrentTid();
-            var currentPage = getCurrentPage();
-
-            if (currentTid !== parseInt(settings.tid) || currentPage !== 1) {
-                // 更新运行状态为目标页面
-                saveRunningState({
-                    tid: parseInt(settings.tid),
-                    currentPage: 1,
-                    totalPagesProcessed: 0,
-                    processedFloors: [],
-                    processedCount: 0,
-                    startTime: Date.now()
-                });
-                addScoreLogEntry('info', '正在跳转到目标帖子第1页...');
-                self.navigateToPage(settings.tid, 1);
-                return; // 页面跳转后会通过resume继续
+            var startPage = 1;
+            if (currentTid === parseInt(settings.tid)) {
+                startPage = getCurrentPage() || 1;
+                addScoreLogEntry('info', '当前已在目标帖子，从第' + startPage + '页开始加分');
+            } else {
+                addScoreLogEntry('info', '不在目标帖子，跳转到第1页开始...');
             }
 
-            // 开始处理当前页
-            self._runPageLoop(parseInt(settings.tid), 1, 1);
+            saveRunningState({
+                tid: parseInt(settings.tid),
+                currentPage: startPage,
+                startPage: startPage,
+                processedFloors: [],
+                processedCount: 0,
+                startTime: Date.now()
+            });
+
+            self.navigateToPage(settings.tid, startPage);
+            // 页面跳转后会通过resume自动继续
         },
 
         // 页面循环处理
         // currentPage: 当前URL所在的页码
-        // pagesProcessedSoFar: 本次_runPageLoop调用前已处理的累计页数
-        _runPageLoop: function(tid, currentPage, pagesProcessedSoFar) {
+        // startPage: 批量加分起始页码
+        _runPageLoop: function(tid, currentPage, startPage) {
             var self = this;
             var settings = self.settings;
-            var pagesDone = pagesProcessedSoFar || 0;
 
             function processPage() {
                 if (self.stopRequested) {
@@ -610,26 +598,25 @@
                     return;
                 }
 
-                // 检查页数限制（在处理当前页之前检查）
-                if (settings.maxPages > 0 && pagesDone >= settings.maxPages) {
+                // 检查页数限制: 包括当前页在内共加N页
+                if (settings.maxPages > 0 && currentPage > startPage + settings.maxPages - 1) {
                     self.isRunning = false;
                     clearRunningState();
-                    updateScoreStatusUI('done', '批量加分完成！已达到最大页数限制(' + settings.maxPages + '页)');
-                    addScoreLogEntry('info', '========== 批量加分完成(达到页数限制，共处理' + pagesDone + '页) ==========');
+                    updateScoreStatusUI('done', '批量加分完成！已达到加分页数量(' + settings.maxPages + '页，起始' + startPage + '→' + (startPage + settings.maxPages - 1) + '页)');
+                    addScoreLogEntry('info', '========== 批量加分完成(达到页数限制) ==========');
                     updateControlButtons(false);
                     return;
                 }
 
                 self.currentPage = currentPage;
-                self.totalPagesProcessed = pagesDone;
-                updateScoreStatusUI('running', '正在处理第 ' + currentPage + ' 页 (累计已处理' + pagesDone + '页)...');
-                addScoreLogEntry('info', '--- 开始处理第 ' + currentPage + ' 页 (累计第' + (pagesDone + 1) + '页) ---');
+                updateScoreStatusUI('running', '正在处理第 ' + currentPage + ' 页 (起始第' + startPage + '页, 共加' + (settings.maxPages || '∞') + '页)...');
+                addScoreLogEntry('info', '--- 开始处理第 ' + currentPage + ' 页 ---');
 
-                // 更新运行状态（track累计页数）
+                // 更新运行状态
                 saveRunningState({
                     tid: tid,
                     currentPage: currentPage,
-                    totalPagesProcessed: pagesDone,
+                    startPage: startPage,
                     processedFloors: self.processedFloors,
                     processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0)
                 });
@@ -655,15 +642,12 @@
 
                         addScoreLogEntry('info', '第 ' + currentPage + ' 页处理完成: 成功' + result.processed + '条, 失败' + result.errors + '条');
 
-                        // 当前页处理完毕，累计+1
-                        var newPagesDone = pagesDone + 1;
-
-                        // 检查页数限制（当前页处理完后检查）
-                        if (settings.maxPages > 0 && newPagesDone >= settings.maxPages) {
+                        // 检查页数限制（当前页处理完后检查: 包括起始页共maxPages页）
+                        if (settings.maxPages > 0 && currentPage - startPage + 1 >= settings.maxPages) {
                             self.isRunning = false;
                             clearRunningState();
-                            updateScoreStatusUI('done', '批量加分完成！已达到最大页数限制(' + settings.maxPages + '页)');
-                            addScoreLogEntry('info', '========== 批量加分完成(达到页数限制，共处理' + newPagesDone + '页) ==========');
+                            updateScoreStatusUI('done', '批量加分完成！已达到加分页数量(' + settings.maxPages + '页，起始' + startPage + '→' + currentPage + '页)');
+                            addScoreLogEntry('info', '========== 批量加分完成(达到页数限制) ==========');
                             updateControlButtons(false);
                             return;
                         }
@@ -703,11 +687,11 @@
                         saveRunningState({
                             tid: tid,
                             currentPage: nextPage,
-                            totalPagesProcessed: newPagesDone,
+                            startPage: startPage,
                             processedFloors: self.processedFloors,
                             processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0)
                         });
-                        addScoreLogEntry('info', '正在跳转到第 ' + nextPage + ' 页 (已累计处理' + newPagesDone + '页)...');
+                        addScoreLogEntry('info', '正在跳转到第 ' + nextPage + ' 页...');
                         self.navigateToPage(tid, nextPage);
                     })
                     .catch(function(err) {
@@ -741,25 +725,22 @@
             // 使用URL中的当前页码（我们已经导航到这个页面了）
             var currentPageFromUrl = getCurrentPage();
             var resumePage = currentPageFromUrl || runningState.currentPage || 1;
-            // 累计已处理的页数（跨页面跟踪）
-            var pagesDone = runningState.totalPagesProcessed || 0;
+            var startPage = runningState.startPage || resumePage;
 
             self.isRunning = true;
             self.stopRequested = false;
             self.processedFloors = runningState.processedFloors || [];
             self.currentPage = resumePage;
-            self.totalPagesProcessed = pagesDone;
 
             addScoreLogEntry('info', '========== 恢复批量加分 ==========');
-            addScoreLogEntry('info', '继续处理第 ' + resumePage + ' 页 (累计已处理' + pagesDone + '页)');
+            addScoreLogEntry('info', '继续处理第 ' + resumePage + ' 页 (起始页' + startPage + ')');
 
             // 仅当面板已打开时才更新UI状态（防止自动弹出面板）
-            // updateScoreStatusUI 内置 isPanelVisible() 检查
             updateScoreStatusUI('running', '正在恢复批量加分...');
             updateControlButtons(true);
 
-            // 继续从当前页处理，传递累计页数
-            self._runPageLoop(runningState.tid, resumePage, pagesDone);
+            // 继续从当前页处理
+            self._runPageLoop(runningState.tid, resumePage, startPage);
             return true;
         },
 
@@ -889,9 +870,9 @@
 
         // 停止条件
         html += '<div class="warden-form-row">';
-        html += '<label>最大页数:</label>';
-        html += '<input type="number" class="warden-input warden-input-short" id="warden-score-maxpages" value="0" min="0" title="达到此页数后自动停止，0表示不限制">';
-        html += '<span style="font-size:11px;color:#8b6914;">0=不限制</span>';
+        html += '<label>加分页数量:</label>';
+        html += '<input type="number" class="warden-input warden-input-short" id="warden-score-maxpages" value="0" min="0" title="包括当前页在内共加N页，0表示不限制">';
+        html += '<span style="font-size:11px;color:#8b6914;">0=不限制，设为N则加N页后停止</span>';
         html += '</div>';
 
         html += '<div class="warden-form-row">';
@@ -1146,7 +1127,7 @@
             var runningState = loadRunningState();
             if (runningState) {
                 updateScoreStatusUIForce('running', '检测到未完成的加分任务(TID:' + runningState.tid + ', 当前第' + runningState.currentPage + '页)');
-                addScoreLogEntry('info', '检测到未完成的加分任务(TID:' + runningState.tid + ', 已处理' + (runningState.totalPagesProcessed || 0) + '页, 当前第' + runningState.currentPage + '页)');
+                addScoreLogEntry('info', '检测到未完成的加分任务(TID:' + runningState.tid + ', 起始页' + (runningState.startPage || 1) + ', 当前第' + runningState.currentPage + '页)');
                 updateControlButtonsForce(false); // 让用户决定是否继续
             }
         }
