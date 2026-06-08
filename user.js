@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/
-// @version      1.0.4
+// @version      1.0.5
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -770,33 +770,20 @@
                 '</div>' +
                 '<div id="nga-warden-tabs">' +
                     '<div class="tab-btn active" data-tab="0">批量加分</div>' +
-                    '<div class="tab-btn" data-tab="1">关于</div>' +
+                    '<div class="tab-btn" data-tab="1">设置</div>' +
                 '</div>' +
                 '<div id="nga-warden-body">' +
                     // ---- 页面0: 批量加分 ----
                     '<div class="warden-page active" data-page="0">' +
                         createBatchScorePageHTML() +
                     '</div>' +
-                    // ---- 页面1: 关于 ----
+                    // ---- 页面1: 设置 ----
                     '<div class="warden-page" data-page="1">' +
                         '<div class="warden-section">' +
-                            '<h3>NGA版主管理增强工具</h3>' +
-                            '<p>版本: 1.0.0</p>' +
-                            '<p>作者: UST & wlxc</p>' +
-                            '<p>功能模块:</p>' +
-                            '<p>• <b>批量加分</b> - 自动对帖子楼层进行批量加分操作，支持设置加分数量、理由、页数限制和楼层限制。使用浏览器已有的Cookie进行身份验证，无需手动配置。</p>' +
-                            '<p style="margin-top:8px;color:#8b6914;">⚠ 使用提示：批量加分过程中请勿关闭或切换页面，脚本会自动跳转到下一页继续加分。</p>' +
-                            '<p style="color:#8b6914;">⚠ 加分完成后请及时关闭本工具，避免误操作。</p>' +
-                        '</div>' +
-                        '<div class="warden-section">' +
-                            '<h3>评分参数说明</h3>' +
-                            '<p>基于NGA版主评分接口 (<b>js_admin.js</b> 的 adminui.addpoint)：</p>' +
-                            '<p>• <b>声望值</b>：正数=加分，负数=扣分，范围-1500~1500</p>' +
-                            '<p>• <b>opt</b>：操作位域 = 4194304(加减声望) + 1(金钱) + 2(威望) + 4(PM)</p>' +
-                            '<p>• <b>value</b>：自定义声望值（即声望值输入框的值）</p>' +
-                            '<p style="margin-top:6px;color:#8b6914;">• 增加/扣除金钱：100声望合1金币</p>' +
-                            '<p style="color:#8b6914;">• 增加威望：150声望合1威望</p>' +
-                            '<p style="color:#8b6914;">• 给作者发送PM：勾选后给用户发送通知私信</p>' +
+                            '<h3>关于</h3>' +
+                            '<div class="settings-row"><span class="settings-label">NGA版主管理增强工具</span></div>' +
+                            '<div class="settings-row"><span class="settings-label">源代码Github仓库：</span><span class="settings-value"><a href="https://github.com/drpasserby/NGA_WardenTool" target="_blank">NGA_WardenTool</a></span></div>'+
+                            '<div class="settings-row"><span class="settings-label">开发者：</span><span class="settings-value"><a href="https://bbs.nga.cn/nuke.php?func=ucp&uid=62716817" target="_blank">UST</a></span></div>'
                         '</div>' +
                     '</div>' +
                 '</div>' +
