@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/
-// @version      1.0.5
+// @version      1.0.6
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -756,6 +756,244 @@
     };
 
     // ===================================
+    // 贴内批量操作引擎
+    // ===================================
+    var REPLY_ENGINE = {
+        isRunning: false,
+        stopRequested: false,
+        replyList: [],       // { tid, pid, floor, checked }
+        currentIndex: 0,
+
+        // 扫描当前页面所有回复
+        scanReplies: function() {
+            var self = this;
+            self.replyList = [];
+            var tid = getCurrentTid();
+
+            if (!tid) {
+                addReplyLogEntry('error', '当前页面没有检测到TID，请在帖子页面中使用');
+                return [];
+            }
+
+            // 获取当前页面所有楼层
+            var floors = getCurrentPageFloors();
+            for (var i = 0; i < floors.length; i++) {
+                self.replyList.push({
+                    tid: tid,
+                    pid: floors[i].pid,
+                    floor: floors[i].floor,
+                    checked: true
+                });
+            }
+
+            addReplyLogEntry('info', '扫描完成：共找到 ' + self.replyList.length + ' 个回复楼层');
+            return self.replyList;
+        },
+
+        // 对单个回复执行锁隐/锁定/隐藏/编辑/下沉/审核操作
+        lockReply: function(tid, pid, pon, poff) {
+            return new Promise(function(resolve, reject) {
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/nuke.php', true);
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                xhr.timeout = 15000;
+
+                var params = '__lib=topic_lock&__act=set' +
+                    '&ids=' + encodeURIComponent(tid + ',' + pid) +
+                    '&ton=0&toff=0' +
+                    '&pon=' + (pon || 0) +
+                    '&poff=' + (poff || 0) +
+                    '&pm=0&info=&raw=3';
+
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        try {
+                            var resp = JSON.parse(xhr.responseText);
+                            if (resp.error) {
+                                reject(new Error(JSON.stringify(resp.error)));
+                            } else {
+                                resolve(resp);
+                            }
+                        } catch (e) {
+                            if (xhr.responseText.indexOf('"error"') === -1) {
+                                resolve({ success: true });
+                            } else {
+                                reject(new Error('响应解析失败'));
+                            }
+                        }
+                    } else {
+                        reject(new Error('HTTP ' + xhr.status));
+                    }
+                };
+                xhr.onerror = function() { reject(new Error('网络请求失败')); };
+                xhr.ontimeout = function() { reject(new Error('请求超时')); };
+                xhr.send(params);
+            });
+        },
+
+        // 执行批量操作
+        execute: function(checkedList, pon, poff, delay) {
+            var self = this;
+            self.isRunning = true;
+            self.stopRequested = false;
+            self.currentIndex = 0;
+
+            var total = checkedList.length;
+            var processed = 0;
+            var errors = 0;
+
+            var opName = (pon == 1026 && poff == 0) ? '锁隐' :
+                         (pon == 1024 && poff == 0) ? '单锁定' :
+                         (pon == 2 && poff == 0) ? '单隐藏' :
+                         (pon == 128 && poff == 0) ? '编辑' :
+                         (pon == 16777216 && poff == 0) ? '下沉' :
+                         (pon == 512 && poff == 0) ? '审核开' :
+                         (pon == 0 && poff == 512) ? '审核关' :
+                         ('pon=' + pon + ' poff=' + poff);
+
+            updateReplyStatusUI('running', '正在执行' + opName + '... (0/' + total + ')');
+            addReplyLogEntry('info', '========== 开始批量操作 ==========');
+            addReplyLogEntry('info', '操作类型: ' + opName + ' (pon=' + pon + ' poff=' + poff + ')');
+            addReplyLogEntry('info', '目标数量: ' + total + ' 个回复');
+
+            function processNext(index) {
+                if (index >= total || self.stopRequested) {
+                    self.isRunning = false;
+                    if (self.stopRequested) {
+                        updateReplyStatusUI('stopped', '操作已手动停止 (完成' + processed + '/失败' + errors + ')');
+                        addReplyLogEntry('info', '========== 操作已停止 ==========');
+                    } else {
+                        updateReplyStatusUI('done', '操作完成！成功' + processed + '条, 失败' + errors + '条');
+                        addReplyLogEntry('info', '========== 操作完成 ==========');
+                    }
+                    updateReplyButtons(false);
+                    return;
+                }
+
+                var item = checkedList[index];
+                self.currentIndex = index;
+                updateReplyStatusUI('running', '正在' + opName + ': PID=' + item.pid + ' 楼层#' + item.floor + ' (' + (index + 1) + '/' + total + ')');
+
+                return self.lockReply(item.tid, item.pid, pon, poff)
+                    .then(function() {
+                        processed++;
+                        addReplyLogEntry('success', 'PID=' + item.pid + ' 楼层#' + item.floor + ' ' + opName + '成功');
+                        return sleepAsync(delay).then(function() {
+                            return processNext(index + 1);
+                        });
+                    })
+                    .catch(function(err) {
+                        errors++;
+                        addReplyLogEntry('error', 'PID=' + item.pid + ' 楼层#' + item.floor + ' ' + opName + '失败: ' + err.message);
+                        return sleepAsync(delay).then(function() {
+                            return processNext(index + 1);
+                        });
+                    });
+            }
+
+            processNext(0);
+        },
+
+        stop: function() {
+            this.stopRequested = true;
+            this.isRunning = false;
+            updateReplyStatusUI('stopped', '正在停止...');
+            addReplyLogEntry('info', '========== 收到停止指令 ==========');
+            updateReplyButtons(false);
+        }
+    };
+
+    // 贴内批量操作日志
+    function addReplyLogEntry(type, message) {
+        var logEl = document.getElementById('nga-warden-reply-log');
+        if (!logEl) return;
+        var line = document.createElement('div');
+        line.className = 'log-line ' + type;
+        line.textContent = '[' + formatTime() + '] ' + message;
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function clearReplyLogUI() {
+        var logEl = document.getElementById('nga-warden-reply-log');
+        if (logEl) logEl.innerHTML = '';
+    }
+
+    function updateReplyStatusUI(state, message) {
+        if (!isPanelVisible()) return;
+        var statusEl = document.getElementById('nga-warden-reply-status');
+        var textEl = document.getElementById('warden-reply-status-text');
+        var countEl = document.getElementById('warden-reply-status-count');
+        if (statusEl) {
+            statusEl.className = state;
+            statusEl.style.display = 'block';
+        }
+        if (textEl) textEl.textContent = message;
+        if (countEl && REPLY_ENGINE.isRunning) {
+            countEl.textContent = '进度: ' + (REPLY_ENGINE.currentIndex + 1) + '/' + REPLY_ENGINE.replyList.length;
+        }
+    }
+
+    function updateReplyButtons(isRunning) {
+        if (!isPanelVisible()) return;
+        var execBtn = document.getElementById('warden-btn-execute-reply');
+        var stopBtn = document.getElementById('warden-btn-stop-reply');
+        if (execBtn) execBtn.disabled = isRunning;
+        if (stopBtn) stopBtn.disabled = !isRunning;
+    }
+
+    function renderReplyList(replies) {
+        var container = document.getElementById('warden-reply-list');
+        var countEl = document.getElementById('warden-reply-count');
+        if (!container) return;
+
+        if (replies.length === 0) {
+            container.innerHTML = '<span style="color:#8b6914;">未找到回复楼层</span>';
+            if (countEl) countEl.textContent = '0';
+            return;
+        }
+
+        if (countEl) countEl.textContent = replies.length;
+
+        var html = '';
+        for (var i = 0; i < replies.length; i++) {
+            var r = replies[i];
+            html += '<label style="display:flex;align-items:center;padding:3px 4px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px;">';
+            html += '<input type="checkbox" class="warden-reply-checkbox" data-index="' + i + '"' + (r.checked ? ' checked' : '') + ' style="margin-right:6px;">';
+            html += '<span style="color:#1a5276;">楼层#' + r.floor + '</span>';
+            html += '<span style="color:#8b6914;margin-left:8px;">PID:' + r.pid + '</span>';
+            html += '<span style="color:#6b4e2e;margin-left:8px;">TID:' + r.tid + '</span>';
+            html += '</label>';
+        }
+        container.innerHTML = html;
+
+        // 启用执行按钮
+        var execBtn = document.getElementById('warden-btn-execute-reply');
+        if (execBtn) execBtn.disabled = false;
+    }
+
+    function getCheckedReplies() {
+        var checkboxes = document.querySelectorAll('.warden-reply-checkbox');
+        var checked = [];
+        for (var i = 0; i < checkboxes.length; i++) {
+            if (checkboxes[i].checked) {
+                var idx = parseInt(checkboxes[i].getAttribute('data-index'));
+                if (REPLY_ENGINE.replyList[idx]) {
+                    checked.push(REPLY_ENGINE.replyList[idx]);
+                }
+            }
+        }
+        return checked;
+    }
+
+    function selectAllReplies(checked) {
+        var checkboxes = document.querySelectorAll('.warden-reply-checkbox');
+        for (var i = 0; i < checkboxes.length; i++) {
+            checkboxes[i].checked = checked;
+        }
+    }
+
+    // ===================================
     // UI: 创建主面板
     // ===================================
     function createPanel() {
@@ -770,15 +1008,20 @@
                 '</div>' +
                 '<div id="nga-warden-tabs">' +
                     '<div class="tab-btn active" data-tab="0">批量加分</div>' +
-                    '<div class="tab-btn" data-tab="1">设置</div>' +
+                    '<div class="tab-btn" data-tab="1">贴内批量操作</div>' +
+                    '<div class="tab-btn" data-tab="2">设置</div>' +
                 '</div>' +
                 '<div id="nga-warden-body">' +
                     // ---- 页面0: 批量加分 ----
                     '<div class="warden-page active" data-page="0">' +
                         createBatchScorePageHTML() +
                     '</div>' +
-                    // ---- 页面1: 设置 ----
+                    // ---- 页面1: 贴内批量操作 ----
                     '<div class="warden-page" data-page="1">' +
+                        createReplyOpsPageHTML() +
+                    '</div>' +
+                    // ---- 页面2: 设置 ----
+                    '<div class="warden-page" data-page="2">' +
                         '<div class="warden-section">' +
                             '<h3>关于</h3>' +
                             '<div class="settings-row"><span class="settings-label">NGA版主管理增强工具</span></div>' +
@@ -912,6 +1155,87 @@
         // 日志区域
         html += '<div style="font-size:12px;color:#6b4e2e;margin-top:8px;font-weight:bold;">运行日志:</div>';
         html += '<div id="nga-warden-score-log">';
+        html += '<div class="log-line info">就绪，等待操作...</div>';
+        html += '</div>';
+
+        return html;
+    }
+
+    // ===================================
+    // UI: 贴内批量操作页面
+    // ===================================
+    function createReplyOpsPageHTML() {
+        var html = '';
+        html += '<div class="warden-section">';
+        html += '<h3>贴内批量操作</h3>';
+        html += '<p style="font-size:12px;color:#8b6914;">对当前页面上的所有回复楼层进行批量锁隐/锁定操作。使用 <b>topic_lock</b> API。</p>';
+        html += '</div>';
+
+        // 操作类型
+        html += '<div class="warden-section">';
+        html += '<h3>操作设置</h3>';
+
+        html += '<div class="warden-form-row">';
+        html += '<label>操作类型:</label>';
+        html += '<select class="warden-input" id="warden-reply-op-type" style="width:auto;">';
+        html += '<option value="1026:0" selected>锁隐回复 (锁定+隐藏 pon=1026)</option>';
+        html += '<option value="1024:0">单锁定回复 (仅锁定 pon=1024)</option>';
+        html += '<option value="2:0">单隐藏回复 (仅隐藏 pon=2)</option>';
+        html += '<option value="128:0">编辑 (pon=128)</option>';
+        html += '<option value="16777216:0">下沉 (pon=16777216)</option>';
+        html += '<option value="512:0">审核开 (pon=512)</option>';
+        html += '<option value="0:512">审核关 (poff=512)</option>';
+        html += '</select>';
+        html += '</div>';
+
+        html += '<div class="warden-form-row">';
+        html += '<label>操作间隔(ms):</label>';
+        html += '<input type="number" class="warden-input warden-input-short" id="warden-reply-op-delay" value="50" min="50" max="5000" step="50" title="每次操作之间的延迟时间">';
+        html += '<span style="font-size:11px;color:#8b6914;">建议50ms-200ms</span>';
+        html += '</div>';
+
+        html += '</div>';
+
+        // 当前页面回复列表
+        html += '<div class="warden-section">';
+        html += '<h3>当前页面回复列表</h3>';
+        html += '<div class="warden-form-row">';
+        html += '<label>回复数量:</label>';
+        html += '<span style="color:#492e1b;font-weight:bold;" id="warden-reply-count">未扫描</span>';
+        html += '</div>';
+        html += '<div style="margin-top:8px;">';
+        html += '<button class="warden-btn" id="warden-btn-scan-replies" title="扫描当前页面所有回复">扫描当前页回复</button>';
+        html += '<button class="warden-btn" id="warden-btn-select-all" title="全选" style="margin-left:4px;">全选</button>';
+        html += '<button class="warden-btn" id="warden-btn-deselect-all" title="取消全选" style="margin-left:4px;">取消全选</button>';
+        html += '</div>';
+
+        // 回复列表（可勾选）
+        html += '<div id="warden-reply-list" style="max-height:250px;overflow-y:auto;background:#fff;border:1px solid #d4c5a9;padding:8px;margin-top:8px;font-size:12px;">';
+        html += '<span style="color:#8b6914;">点击"扫描当前页回复"按钮获取回复列表</span>';
+        html += '</div>';
+
+        html += '</div>';
+
+        // 进度状态
+        html += '<div id="nga-warden-reply-status" style="background:#faf3e6;border:1px solid #d4c5a9;padding:8px 12px;margin-bottom:10px;display:none;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+        html += '<span id="warden-reply-status-text" style="font-weight:bold;"></span>';
+        html += '<span id="warden-reply-status-count" style="font-size:12px;color:#8b6914;"></span>';
+        html += '</div>';
+        html += '<div class="warden-progress-bar" style="display:none;" id="warden-reply-progress-container">';
+        html += '<div class="fill" id="warden-reply-progress-fill" style="width:0%"></div>';
+        html += '</div>';
+        html += '</div>';
+
+        // 控制按钮
+        html += '<div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap;">';
+        html += '<button class="warden-btn danger" id="warden-btn-execute-reply" title="执行批量锁隐/锁定操作" disabled>▶ 执行操作</button>';
+        html += '<button class="warden-btn" id="warden-btn-stop-reply" disabled title="停止操作">■ 停止</button>';
+        html += '</div>';
+
+        // 日志
+        html += '<div style="font-size:12px;color:#6b4e2e;margin-top:8px;font-weight:bold;">操作日志:</div>';
+        html += '<div id="nga-warden-reply-log" style="background:#fff;border:1px solid #d4c5a9;padding:8px;margin-top:8px;max-height:200px;overflow-y:auto;font-size:12px;font-family:Consolas,monospace;">';
         html += '<div class="log-line info">就绪，等待操作...</div>';
         html += '</div>';
 
@@ -1231,6 +1555,70 @@
                 clearScoreLog();
                 clearLogUI();
                 addScoreLogEntry('info', '日志已清除');
+            });
+        }
+
+        // ========== 贴内批量操作事件 ==========
+
+        // 扫描当前页回复
+        var scanBtn = document.getElementById('warden-btn-scan-replies');
+        if (scanBtn) {
+            scanBtn.addEventListener('click', function() {
+                clearReplyLogUI();
+                var replies = REPLY_ENGINE.scanReplies();
+                renderReplyList(replies);
+            });
+        }
+
+        // 全选
+        var selectAllBtn = document.getElementById('warden-btn-select-all');
+        if (selectAllBtn) {
+            selectAllBtn.addEventListener('click', function() {
+                selectAllReplies(true);
+            });
+        }
+
+        // 取消全选
+        var deselectAllBtn = document.getElementById('warden-btn-deselect-all');
+        if (deselectAllBtn) {
+            deselectAllBtn.addEventListener('click', function() {
+                selectAllReplies(false);
+            });
+        }
+
+        // 执行批量操作
+        var executeBtn = document.getElementById('warden-btn-execute-reply');
+        if (executeBtn) {
+            executeBtn.addEventListener('click', function() {
+                var checkedList = getCheckedReplies();
+                if (checkedList.length === 0) {
+                    alert('请先选择要操作的回复！');
+                    return;
+                }
+                var ponEl = document.getElementById('warden-reply-op-type');
+                var delayEl = document.getElementById('warden-reply-op-delay');
+                var ponVal = ponEl ? ponEl.value : '1026:0';
+                var parts = ponVal.split(':');
+                var pon = parseInt(parts[0]) || 0;
+                var poff = parseInt(parts[1]) || 0;
+                var delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
+
+                var opLabel = ponEl ? ponEl.options[ponEl.selectedIndex].text : '操作';
+
+                if (!confirm('确定要对 ' + checkedList.length + ' 个回复执行【' + opLabel + '】吗？')) {
+                    return;
+                }
+
+                updateReplyButtons(true);
+                REPLY_ENGINE.execute(checkedList, pon, poff, delay);
+            });
+        }
+
+        // 停止操作
+        var stopReplyBtn = document.getElementById('warden-btn-stop-reply');
+        if (stopReplyBtn) {
+            stopReplyBtn.addEventListener('click', function() {
+                REPLY_ENGINE.stop();
             });
         }
 
