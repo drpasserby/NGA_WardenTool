@@ -11,8 +11,8 @@
 // @match        *://ngacn.cc/*
 // @license      GPL-3.0
 // @icon         http://bbs.nga.cn/favicon.ico
-// @downloadURL  https://update.greasyfork.org/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7.user.js
-// @updateURL    https://update.greasyfork.org/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7.user.js
+// @downloadURL  https://update.greasyfork.org/scripts/582076/nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7.user.js
+// @updateURL    https://update.greasyfork.org/scripts/582076/nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7.user.js
 // @grant        none
 // ==/UserScript==
 
