@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
-// @namespace    https://greasyfork.org/zh-CN/scripts/
-// @version      1.0.6
+// @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
+// @version      1.0.7
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -11,8 +11,8 @@
 // @match        *://ngacn.cc/*
 // @license      GPL-3.0
 // @icon         http://bbs.nga.cn/favicon.ico
-// @downloadURL
-// @updateURL
+// @downloadURL  https://update.greasyfork.org/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7.user.js
+// @updateURL    https://update.greasyfork.org/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7.user.js
 // @grant        none
 // ==/UserScript==
 
@@ -1009,7 +1009,8 @@
                 '<div id="nga-warden-tabs">' +
                     '<div class="tab-btn active" data-tab="0">批量加分</div>' +
                     '<div class="tab-btn" data-tab="1">贴内批量操作</div>' +
-                    '<div class="tab-btn" data-tab="2">设置</div>' +
+                    '<div class="tab-btn" data-tab="2">用户回复操作</div>' +
+                    '<div class="tab-btn" data-tab="3">设置</div>' +
                 '</div>' +
                 '<div id="nga-warden-body">' +
                     // ---- 页面0: 批量加分 ----
@@ -1020,8 +1021,12 @@
                     '<div class="warden-page" data-page="1">' +
                         createReplyOpsPageHTML() +
                     '</div>' +
-                    // ---- 页面2: 设置 ----
+                    // ---- 页面2: 用户回复操作 ----
                     '<div class="warden-page" data-page="2">' +
+                        createUserReplyPageHTML() +
+                    '</div>' +
+                    // ---- 页面3: 设置 ----
+                    '<div class="warden-page" data-page="3">' +
                         '<div class="warden-section">' +
                             '<h3>关于</h3>' +
                             '<div class="settings-row"><span class="settings-label">NGA版主管理增强工具</span></div>' +
@@ -1240,6 +1245,264 @@
         html += '</div>';
 
         return html;
+    }
+
+    // ===================================
+    // UI: 用户回复操作页面
+    // ===================================
+    function createUserReplyPageHTML() {
+        var html = '';
+        html += '<div class="warden-section">';
+        html += '<h3>用户回复操作</h3>';
+        html += '<p style="font-size:12px;color:#8b6914;">在用户回复页（<b>thread.php?authorid=</b>）扫描该用户的所有回复和主题，支持批量锁隐和复制。</p>';
+        html += '</div>';
+
+        // 操作间隔
+        html += '<div class="warden-section">';
+        html += '<h3>操作设置</h3>';
+        html += '<div class="warden-form-row">';
+        html += '<label>操作间隔(ms):</label>';
+        html += '<input type="number" class="warden-input warden-input-short" id="warden-ur-op-delay" value="100" min="50" max="5000" step="50" title="每次操作之间的延迟时间">';
+        html += '<span style="font-size:11px;color:#8b6914;">建议50ms-200ms</span>';
+        html += '</div>';
+        html += '</div>';
+
+        // 扫描控制
+        html += '<div class="warden-section">';
+        html += '<h3>扫描页面</h3>';
+        html += '<div style="margin-bottom:8px;">';
+        html += '<button class="warden-btn" id="warden-btn-scan-ur" title="扫描当前用户回复页">扫描当前页面</button>';
+        html += '</div>';
+
+        // 回复列表区域
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
+        html += '<span style="font-weight:bold;color:#492e1b;">回复列表：<span id="warden-ur-reply-count" style="color:#c0392b;">0</span> 个回复</span>';
+        html += '<div>';
+        html += '<button class="warden-btn" id="warden-btn-copy-ur-replies" title="复制回复TID,PID列表">复制</button>';
+        html += '<button class="warden-btn danger" id="warden-btn-lockhide-ur-replies" title="批量锁隐所有回复" style="margin-left:4px;">批量锁隐回复</button>';
+        html += '</div>';
+        html += '</div>';
+        html += '<textarea id="warden-ur-reply-text" class="warden-input" readonly style="width:100%;height:120px;font-size:12px;font-family:Consolas,monospace;resize:vertical;box-sizing:border-box;" placeholder="扫描后显示回复的TID,PID..."></textarea>';
+        html += '</div>';
+
+        // 主题列表区域
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
+        html += '<span style="font-weight:bold;color:#492e1b;">主题列表：<span id="warden-ur-topic-count" style="color:#c0392b;">0</span> 个主题(已去重)</span>';
+        html += '<div>';
+        html += '<button class="warden-btn" id="warden-btn-copy-ur-topics" title="复制主题TID列表">复制</button>';
+        html += '<button class="warden-btn danger" id="warden-btn-lock-ur-topics" title="批量单锁定所有主题贴" style="margin-left:4px;">批量单锁定主题贴</button>';
+        html += '</div>';
+        html += '</div>';
+        html += '<textarea id="warden-ur-topic-text" class="warden-input" readonly style="width:100%;height:100px;font-size:12px;font-family:Consolas,monospace;resize:vertical;box-sizing:border-box;" placeholder="扫描后显示主题TID..."></textarea>';
+        html += '</div>';
+
+        html += '</div>';
+
+        // 进度状态
+        html += '<div id="nga-warden-ur-status" style="background:#faf3e6;border:1px solid #d4c5a9;padding:8px 12px;margin-bottom:10px;display:none;">';
+        html += '<span id="warden-ur-status-text" style="font-weight:bold;"></span>';
+        html += '</div>';
+
+        // 日志
+        html += '<div style="font-size:12px;color:#6b4e2e;margin-top:8px;font-weight:bold;">操作日志:</div>';
+        html += '<div id="nga-warden-ur-log" style="background:#fff;border:1px solid #d4c5a9;padding:8px;margin-top:8px;max-height:200px;overflow-y:auto;font-size:12px;font-family:Consolas,monospace;">';
+        html += '<div class="log-line info">就绪，等待操作...</div>';
+        html += '</div>';
+
+        return html;
+    }
+
+    // ===================================
+    // 用户回复操作引擎
+    // ===================================
+    var USER_REPLY_ENGINE = {
+        isRunning: false,
+        stopRequested: false,
+        replies: [],    // [{tid, pid}]
+        topics: [],     // [tid] unique
+
+        // 扫描thread.php?authorid=页面
+        scanPage: function() {
+            var self = this;
+            self.replies = [];
+            self.topics = [];
+
+            // 扫描回复: #topicrows .topic_content a[href*="pid="]
+            var replyIds = {};
+            var replyLinks = document.querySelectorAll('#topicrows .topic_content a[href*="pid="]');
+            for (var i = 0; i < replyLinks.length; i++) {
+                try {
+                    var url = new URL(replyLinks[i].href, window.location.href);
+                    var tid = url.searchParams.get('tid');
+                    var pid = url.searchParams.get('pid');
+                    if (tid && pid) {
+                        var key = tid + ',' + pid;
+                        if (!replyIds[key]) {
+                            replyIds[key] = true;
+                            self.replies.push({ tid: tid, pid: pid });
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            // 扫描主题（去重）: #topicrows .topic_content a[href*="tid="]
+            var topicIds = {};
+            var topicLinks = document.querySelectorAll('#topicrows .topic_content a[href*="tid="]');
+            for (var j = 0; j < topicLinks.length; j++) {
+                try {
+                    var tUrl = new URL(topicLinks[j].href, window.location.href);
+                    var tTid = tUrl.searchParams.get('tid');
+                    if (tTid && !topicIds[tTid]) {
+                        topicIds[tTid] = true;
+                        self.topics.push(tTid);
+                    }
+                } catch(e) {}
+            }
+
+            addUrLogEntry('info', '扫描完成：回复' + self.replies.length + '条，主题' + self.topics.length + '个(已去重)');
+            return { replies: self.replies, topics: self.topics };
+        },
+
+        // 批量执行锁隐回复 (pon=1026)
+        executeLockHideReplies: function(delay) {
+            var self = this;
+            self.isRunning = true;
+            self.stopRequested = false;
+            var list = self.replies.slice();
+            var total = list.length;
+            var processed = 0, errors = 0;
+
+            updateUrStatusUI('running', '正在批量锁隐回复... (0/' + total + ')');
+            addUrLogEntry('info', '========== 批量锁隐回复开始 ==========');
+            addUrLogEntry('info', '目标: ' + total + ' 条回复');
+
+            function processNext(index) {
+                if (index >= total || self.stopRequested) {
+                    self.isRunning = false;
+                    var msg = self.stopRequested ? '已停止' : '完成';
+                    updateUrStatusUI(self.stopRequested ? 'stopped' : 'done', msg + '！成功' + processed + '/失败' + errors);
+                    addUrLogEntry('info', '========== 批量锁隐回复' + msg + ' ==========');
+                    return;
+                }
+                var item = list[index];
+                updateUrStatusUI('running', '锁隐: TID=' + item.tid + ' PID=' + item.pid + ' (' + (index + 1) + '/' + total + ')');
+
+                return REPLY_ENGINE.lockReply(item.tid, item.pid, 1026, 0)
+                    .then(function() {
+                        processed++;
+                        addUrLogEntry('success', 'TID=' + item.tid + ' PID=' + item.pid + ' 锁隐成功');
+                        return sleepAsync(delay).then(function() { processNext(index + 1); });
+                    })
+                    .catch(function(err) {
+                        errors++;
+                        addUrLogEntry('error', 'TID=' + item.tid + ' PID=' + item.pid + ' 失败: ' + err.message);
+                        return sleepAsync(delay).then(function() { processNext(index + 1); });
+                    });
+            }
+            processNext(0);
+        },
+
+        // 批量执行单锁定主题 (pon=1024, pid=0)
+        executeLockTopics: function(delay) {
+            var self = this;
+            self.isRunning = true;
+            self.stopRequested = false;
+            var list = self.topics.slice();
+            var total = list.length;
+            var processed = 0, errors = 0;
+
+            updateUrStatusUI('running', '正在批量单锁定主题... (0/' + total + ')');
+            addUrLogEntry('info', '========== 批量单锁定主题开始 ==========');
+            addUrLogEntry('info', '目标: ' + total + ' 个主题');
+
+            function processNext(index) {
+                if (index >= total || self.stopRequested) {
+                    self.isRunning = false;
+                    var msg = self.stopRequested ? '已停止' : '完成';
+                    updateUrStatusUI(self.stopRequested ? 'stopped' : 'done', msg + '！成功' + processed + '/失败' + errors);
+                    addUrLogEntry('info', '========== 批量单锁定主题' + msg + ' ==========');
+                    return;
+                }
+                var tid = list[index];
+                updateUrStatusUI('running', '单锁定: TID=' + tid + ' (' + (index + 1) + '/' + total + ')');
+
+                return REPLY_ENGINE.lockReply(tid, '0', 1024, 0)
+                    .then(function() {
+                        processed++;
+                        addUrLogEntry('success', 'TID=' + tid + ' 单锁定成功');
+                        return sleepAsync(delay).then(function() { processNext(index + 1); });
+                    })
+                    .catch(function(err) {
+                        errors++;
+                        addUrLogEntry('error', 'TID=' + tid + ' 失败: ' + err.message);
+                        return sleepAsync(delay).then(function() { processNext(index + 1); });
+                    });
+            }
+            processNext(0);
+        },
+
+        stop: function() {
+            this.stopRequested = true;
+            this.isRunning = false;
+            updateUrStatusUI('stopped', '正在停止...');
+            addUrLogEntry('info', '========== 收到停止指令 ==========');
+        }
+    };
+
+    // 用户回复操作日志
+    function addUrLogEntry(type, message) {
+        var logEl = document.getElementById('nga-warden-ur-log');
+        if (!logEl) return;
+        var line = document.createElement('div');
+        line.className = 'log-line ' + type;
+        line.textContent = '[' + formatTime() + '] ' + message;
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function clearUrLogUI() {
+        var logEl = document.getElementById('nga-warden-ur-log');
+        if (logEl) logEl.innerHTML = '';
+    }
+
+    function updateUrStatusUI(state, message) {
+        if (!isPanelVisible()) return;
+        var statusEl = document.getElementById('nga-warden-ur-status');
+        var textEl = document.getElementById('warden-ur-status-text');
+        if (statusEl) { statusEl.className = state; statusEl.style.display = 'block'; }
+        if (textEl) textEl.textContent = message;
+    }
+
+    function renderUrResults(result) {
+        var replyTextEl = document.getElementById('warden-ur-reply-text');
+        var replyCountEl = document.getElementById('warden-ur-reply-count');
+        var topicTextEl = document.getElementById('warden-ur-topic-text');
+        var topicCountEl = document.getElementById('warden-ur-topic-count');
+
+        if (replyCountEl) replyCountEl.textContent = result.replies.length;
+        if (replyTextEl) {
+            var replyLines = [];
+            for (var i = 0; i < result.replies.length; i++) {
+                replyLines.push(result.replies[i].tid + ',' + result.replies[i].pid);
+            }
+            replyTextEl.value = replyLines.join('\n');
+        }
+
+        if (topicCountEl) topicCountEl.textContent = result.topics.length;
+        if (topicTextEl) topicTextEl.value = result.topics.join('\n');
+    }
+
+    function copyToClipboard(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); return true; } catch(e) { return false; }
+        finally { document.body.removeChild(ta); }
     }
 
     // ===================================
@@ -1619,6 +1882,66 @@
         if (stopReplyBtn) {
             stopReplyBtn.addEventListener('click', function() {
                 REPLY_ENGINE.stop();
+            });
+        }
+
+        // ========== 用户回复操作事件 ==========
+
+        // 扫描用户回复页
+        var scanUrBtn = document.getElementById('warden-btn-scan-ur');
+        if (scanUrBtn) {
+            scanUrBtn.addEventListener('click', function() {
+                clearUrLogUI();
+                var result = USER_REPLY_ENGINE.scanPage();
+                renderUrResults(result);
+            });
+        }
+
+        // 复制回复列表
+        var copyUrRepliesBtn = document.getElementById('warden-btn-copy-ur-replies');
+        if (copyUrRepliesBtn) {
+            copyUrRepliesBtn.addEventListener('click', function() {
+                var textEl = document.getElementById('warden-ur-reply-text');
+                if (!textEl || !textEl.value) { alert('请先扫描页面！'); return; }
+                if (copyToClipboard(textEl.value)) {
+                    addUrLogEntry('info', '回复列表已复制到剪贴板');
+                }
+            });
+        }
+
+        // 批量锁隐回复
+        var lockhideUrBtn = document.getElementById('warden-btn-lockhide-ur-replies');
+        if (lockhideUrBtn) {
+            lockhideUrBtn.addEventListener('click', function() {
+                if (USER_REPLY_ENGINE.replies.length === 0) { alert('请先扫描页面！'); return; }
+                if (!confirm('确定要对 ' + USER_REPLY_ENGINE.replies.length + ' 条回复执行【锁隐】操作吗？')) return;
+                var delayEl = document.getElementById('warden-ur-op-delay');
+                var delay = delayEl ? parseInt(delayEl.value) || 100 : 100;
+                USER_REPLY_ENGINE.executeLockHideReplies(delay);
+            });
+        }
+
+        // 复制主题列表
+        var copyUrTopicsBtn = document.getElementById('warden-btn-copy-ur-topics');
+        if (copyUrTopicsBtn) {
+            copyUrTopicsBtn.addEventListener('click', function() {
+                var textEl = document.getElementById('warden-ur-topic-text');
+                if (!textEl || !textEl.value) { alert('请先扫描页面！'); return; }
+                if (copyToClipboard(textEl.value)) {
+                    addUrLogEntry('info', '主题列表已复制到剪贴板');
+                }
+            });
+        }
+
+        // 批量单锁定主题
+        var lockUrTopicsBtn = document.getElementById('warden-btn-lock-ur-topics');
+        if (lockUrTopicsBtn) {
+            lockUrTopicsBtn.addEventListener('click', function() {
+                if (USER_REPLY_ENGINE.topics.length === 0) { alert('请先扫描页面！'); return; }
+                if (!confirm('确定要对 ' + USER_REPLY_ENGINE.topics.length + ' 个主题执行【单锁定】操作吗？')) return;
+                var delayEl = document.getElementById('warden-ur-op-delay');
+                var delay = delayEl ? parseInt(delayEl.value) || 100 : 100;
+                USER_REPLY_ENGINE.executeLockTopics(delay);
             });
         }
 
