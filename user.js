@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.0.7
+// @version      1.0.8
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -605,6 +605,7 @@
                     updateScoreStatusUI('done', '批量加分完成！已达到加分页数量(' + settings.maxPages + '页，起始' + startPage + '→' + (startPage + settings.maxPages - 1) + '页)');
                     addScoreLogEntry('info', '========== 批量加分完成(达到页数限制) ==========');
                     updateControlButtons(false);
+                    scheduleScorePageRefresh();
                     return;
                 }
 
@@ -637,6 +638,7 @@
                             updateScoreStatusUI('done', '批量加分完成！已到达指定楼层');
                             addScoreLogEntry('info', '========== 批量加分完成(到达停止楼层) ==========');
                             updateControlButtons(false);
+                            scheduleScorePageRefresh();
                             return;
                         }
 
@@ -649,6 +651,7 @@
                             updateScoreStatusUI('done', '批量加分完成！已达到加分页数量(' + settings.maxPages + '页，起始' + startPage + '→' + currentPage + '页)');
                             addScoreLogEntry('info', '========== 批量加分完成(达到页数限制) ==========');
                             updateControlButtons(false);
+                            scheduleScorePageRefresh();
                             return;
                         }
 
@@ -660,6 +663,7 @@
                             updateScoreStatusUI('done', '批量加分完成！已处理到最后一页');
                             addScoreLogEntry('info', '========== 批量加分完成(已到最后一页) ==========');
                             updateControlButtons(false);
+                            scheduleScorePageRefresh();
                             return;
                         }
 
@@ -678,6 +682,7 @@
                                 updateScoreStatusUI('done', '批量加分完成！所有楼层均超过停止楼层');
                                 addScoreLogEntry('info', '========== 批量加分完成(超过停止楼层) ==========');
                                 updateControlButtons(false);
+                                scheduleScorePageRefresh();
                                 return;
                             }
                         }
@@ -754,6 +759,13 @@
             updateControlButtonsForce(false);
         }
     };
+
+    // 加分完成后刷新页面（延迟2秒，等最后的请求完成）
+    function scheduleScorePageRefresh() {
+        setTimeout(function() {
+            window.location.reload();
+        }, 2000);
+    }
 
     // ===================================
     // 贴内批量操作引擎
@@ -1975,6 +1987,9 @@
                 var currentTid = getCurrentTid();
                 if (currentTid === runningState.tid) {
                     log('检测到未完成的加分任务，准备恢复...');
+                    // 自动打开面板并切换到批量加分模块
+                    showPanel();
+                    switchTab(0);
                     // 延迟恢复，确保页面完全加载及DOM就绪
                     setTimeout(function() {
                         log('自动恢复批量加分...');
