@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.0.8
+// @version      1.0.9
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -1291,11 +1291,15 @@
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
         html += '<span style="font-weight:bold;color:#492e1b;">回复列表：<span id="warden-ur-reply-count" style="color:#c0392b;">0</span> 个回复</span>';
         html += '<div>';
-        html += '<button class="warden-btn" id="warden-btn-copy-ur-replies" title="复制回复TID,PID列表">复制</button>';
-        html += '<button class="warden-btn danger" id="warden-btn-lockhide-ur-replies" title="批量锁隐所有回复" style="margin-left:4px;">批量锁隐回复</button>';
+        html += '<button class="warden-btn" id="warden-btn-ur-reply-selectall">全选</button>';
+        html += '<button class="warden-btn" id="warden-btn-ur-reply-deselectall" style="margin-left:4px;">取消全选</button>';
+        html += '<button class="warden-btn" id="warden-btn-copy-ur-replies" title="复制已勾选回复" style="margin-left:4px;">复制已选</button>';
+        html += '<button class="warden-btn danger" id="warden-btn-lockhide-ur-replies" title="批量锁隐已勾选回复" style="margin-left:4px;">批量锁隐回复</button>';
         html += '</div>';
         html += '</div>';
-        html += '<textarea id="warden-ur-reply-text" class="warden-input" readonly style="width:100%;height:120px;font-size:12px;font-family:Consolas,monospace;resize:vertical;box-sizing:border-box;" placeholder="扫描后显示回复的TID,PID..."></textarea>';
+        html += '<div id="warden-ur-reply-list" style="max-height:220px;overflow-y:auto;background:#fff;border:1px solid #d4c5a9;padding:4px;font-size:12px;">';
+        html += '<span style="color:#8b6914;">点击"扫描当前页面"按钮获取回复列表</span>';
+        html += '</div>';
         html += '</div>';
 
         // 主题列表区域
@@ -1303,11 +1307,15 @@
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
         html += '<span style="font-weight:bold;color:#492e1b;">主题列表：<span id="warden-ur-topic-count" style="color:#c0392b;">0</span> 个主题(已去重)</span>';
         html += '<div>';
-        html += '<button class="warden-btn" id="warden-btn-copy-ur-topics" title="复制主题TID列表">复制</button>';
-        html += '<button class="warden-btn danger" id="warden-btn-lock-ur-topics" title="批量单锁定所有主题贴" style="margin-left:4px;">批量单锁定主题贴</button>';
+        html += '<button class="warden-btn" id="warden-btn-ur-topic-selectall">全选</button>';
+        html += '<button class="warden-btn" id="warden-btn-ur-topic-deselectall" style="margin-left:4px;">取消全选</button>';
+        html += '<button class="warden-btn" id="warden-btn-copy-ur-topics" title="复制已勾选主题" style="margin-left:4px;">复制已选</button>';
+        html += '<button class="warden-btn danger" id="warden-btn-lock-ur-topics" title="批量单锁定已勾选主题贴" style="margin-left:4px;">批量单锁定主题贴</button>';
         html += '</div>';
         html += '</div>';
-        html += '<textarea id="warden-ur-topic-text" class="warden-input" readonly style="width:100%;height:100px;font-size:12px;font-family:Consolas,monospace;resize:vertical;box-sizing:border-box;" placeholder="扫描后显示主题TID..."></textarea>';
+        html += '<div id="warden-ur-topic-list" style="max-height:180px;overflow-y:auto;background:#fff;border:1px solid #d4c5a9;padding:4px;font-size:12px;">';
+        html += '<span style="color:#8b6914;">点击"扫描当前页面"按钮获取主题列表</span>';
+        html += '</div>';
         html += '</div>';
 
         html += '</div>';
@@ -1377,12 +1385,11 @@
             return { replies: self.replies, topics: self.topics };
         },
 
-        // 批量执行锁隐回复 (pon=1026)
-        executeLockHideReplies: function(delay) {
+        // 批量执行锁隐回复 (pon=1026) - list由外部传入（已勾选的）
+        executeLockHideReplies: function(list, delay) {
             var self = this;
             self.isRunning = true;
             self.stopRequested = false;
-            var list = self.replies.slice();
             var total = list.length;
             var processed = 0, errors = 0;
 
@@ -1416,12 +1423,11 @@
             processNext(0);
         },
 
-        // 批量执行单锁定主题 (pon=1024, pid=0)
-        executeLockTopics: function(delay) {
+        // 批量执行单锁定主题 (pon=1024, pid=0) - list由外部传入（已勾选的）
+        executeLockTopics: function(list, delay) {
             var self = this;
             self.isRunning = true;
             self.stopRequested = false;
-            var list = self.topics.slice();
             var total = list.length;
             var processed = 0, errors = 0;
 
@@ -1488,22 +1494,85 @@
     }
 
     function renderUrResults(result) {
-        var replyTextEl = document.getElementById('warden-ur-reply-text');
+        var replyListEl = document.getElementById('warden-ur-reply-list');
         var replyCountEl = document.getElementById('warden-ur-reply-count');
-        var topicTextEl = document.getElementById('warden-ur-topic-text');
+        var topicListEl = document.getElementById('warden-ur-topic-list');
         var topicCountEl = document.getElementById('warden-ur-topic-count');
 
+        // 渲染回复列表（勾选框）
         if (replyCountEl) replyCountEl.textContent = result.replies.length;
-        if (replyTextEl) {
-            var replyLines = [];
-            for (var i = 0; i < result.replies.length; i++) {
-                replyLines.push(result.replies[i].tid + ',' + result.replies[i].pid);
+        if (replyListEl) {
+            if (result.replies.length === 0) {
+                replyListEl.innerHTML = '<span style="color:#8b6914;">未找到回复</span>';
+            } else {
+                var replyHtml = '';
+                for (var i = 0; i < result.replies.length; i++) {
+                    var r = result.replies[i];
+                    replyHtml += '<label style="display:flex;align-items:center;padding:2px 4px;cursor:pointer;border-bottom:1px solid #f0f0f0;">';
+                    replyHtml += '<input type="checkbox" class="warden-ur-reply-cb" data-index="' + i + '" checked style="margin-right:6px;flex-shrink:0;">';
+                    replyHtml += '<span style="color:#1a5276;">TID:' + r.tid + '</span>';
+                    replyHtml += '<span style="color:#8b6914;margin-left:8px;">PID:' + r.pid + '</span>';
+                    replyHtml += '</label>';
+                }
+                replyListEl.innerHTML = replyHtml;
             }
-            replyTextEl.value = replyLines.join('\n');
         }
 
+        // 渲染主题列表（勾选框）
         if (topicCountEl) topicCountEl.textContent = result.topics.length;
-        if (topicTextEl) topicTextEl.value = result.topics.join('\n');
+        if (topicListEl) {
+            if (result.topics.length === 0) {
+                topicListEl.innerHTML = '<span style="color:#8b6914;">未找到主题</span>';
+            } else {
+                var topicHtml = '';
+                for (var j = 0; j < result.topics.length; j++) {
+                    var t = result.topics[j];
+                    topicHtml += '<label style="display:flex;align-items:center;padding:2px 4px;cursor:pointer;border-bottom:1px solid #f0f0f0;">';
+                    topicHtml += '<input type="checkbox" class="warden-ur-topic-cb" data-index="' + j + '" checked style="margin-right:6px;flex-shrink:0;">';
+                    topicHtml += '<span style="color:#1a5276;">TID:' + t + '</span>';
+                    topicHtml += '</label>';
+                }
+                topicListEl.innerHTML = topicHtml;
+            }
+        }
+    }
+
+    function selectAllUrReplies(checked) {
+        var cbs = document.querySelectorAll('.warden-ur-reply-cb');
+        for (var i = 0; i < cbs.length; i++) { cbs[i].checked = checked; }
+    }
+
+    function selectAllUrTopics(checked) {
+        var cbs = document.querySelectorAll('.warden-ur-topic-cb');
+        for (var i = 0; i < cbs.length; i++) { cbs[i].checked = checked; }
+    }
+
+    function getCheckedUrReplies() {
+        var cbs = document.querySelectorAll('.warden-ur-reply-cb');
+        var checked = [];
+        for (var i = 0; i < cbs.length; i++) {
+            if (cbs[i].checked) {
+                var idx = parseInt(cbs[i].getAttribute('data-index'));
+                if (USER_REPLY_ENGINE.replies[idx]) {
+                    checked.push(USER_REPLY_ENGINE.replies[idx]);
+                }
+            }
+        }
+        return checked;
+    }
+
+    function getCheckedUrTopics() {
+        var cbs = document.querySelectorAll('.warden-ur-topic-cb');
+        var checked = [];
+        for (var i = 0; i < cbs.length; i++) {
+            if (cbs[i].checked) {
+                var idx = parseInt(cbs[i].getAttribute('data-index'));
+                if (USER_REPLY_ENGINE.topics[idx]) {
+                    checked.push(USER_REPLY_ENGINE.topics[idx]);
+                }
+            }
+        }
+        return checked;
     }
 
     function copyToClipboard(text) {
@@ -1909,51 +1978,81 @@
             });
         }
 
-        // 复制回复列表
+        // 回复全选
+        var urReplySelectAll = document.getElementById('warden-btn-ur-reply-selectall');
+        if (urReplySelectAll) {
+            urReplySelectAll.addEventListener('click', function() { selectAllUrReplies(true); });
+        }
+
+        // 回复取消全选
+        var urReplyDeselectAll = document.getElementById('warden-btn-ur-reply-deselectall');
+        if (urReplyDeselectAll) {
+            urReplyDeselectAll.addEventListener('click', function() { selectAllUrReplies(false); });
+        }
+
+        // 复制已选回复
         var copyUrRepliesBtn = document.getElementById('warden-btn-copy-ur-replies');
         if (copyUrRepliesBtn) {
             copyUrRepliesBtn.addEventListener('click', function() {
-                var textEl = document.getElementById('warden-ur-reply-text');
-                if (!textEl || !textEl.value) { alert('请先扫描页面！'); return; }
-                if (copyToClipboard(textEl.value)) {
-                    addUrLogEntry('info', '回复列表已复制到剪贴板');
+                var checked = getCheckedUrReplies();
+                if (checked.length === 0) { alert('请先扫描页面并勾选回复！'); return; }
+                var lines = [];
+                for (var i = 0; i < checked.length; i++) {
+                    lines.push(checked[i].tid + ',' + checked[i].pid);
+                }
+                if (copyToClipboard(lines.join('\n'))) {
+                    addUrLogEntry('info', '已复制 ' + checked.length + ' 条回复到剪贴板');
                 }
             });
         }
 
-        // 批量锁隐回复
+        // 批量锁隐已选回复
         var lockhideUrBtn = document.getElementById('warden-btn-lockhide-ur-replies');
         if (lockhideUrBtn) {
             lockhideUrBtn.addEventListener('click', function() {
-                if (USER_REPLY_ENGINE.replies.length === 0) { alert('请先扫描页面！'); return; }
-                if (!confirm('确定要对 ' + USER_REPLY_ENGINE.replies.length + ' 条回复执行【锁隐】操作吗？')) return;
+                var checked = getCheckedUrReplies();
+                if (checked.length === 0) { alert('请先扫描页面并勾选回复！'); return; }
+                if (!confirm('确定要对 ' + checked.length + ' 条回复执行【锁隐】操作吗？')) return;
                 var delayEl = document.getElementById('warden-ur-op-delay');
                 var delay = delayEl ? parseInt(delayEl.value) || 100 : 100;
-                USER_REPLY_ENGINE.executeLockHideReplies(delay);
+                USER_REPLY_ENGINE.executeLockHideReplies(checked, delay);
             });
         }
 
-        // 复制主题列表
+        // 主题全选
+        var urTopicSelectAll = document.getElementById('warden-btn-ur-topic-selectall');
+        if (urTopicSelectAll) {
+            urTopicSelectAll.addEventListener('click', function() { selectAllUrTopics(true); });
+        }
+
+        // 主题取消全选
+        var urTopicDeselectAll = document.getElementById('warden-btn-ur-topic-deselectall');
+        if (urTopicDeselectAll) {
+            urTopicDeselectAll.addEventListener('click', function() { selectAllUrTopics(false); });
+        }
+
+        // 复制已选主题
         var copyUrTopicsBtn = document.getElementById('warden-btn-copy-ur-topics');
         if (copyUrTopicsBtn) {
             copyUrTopicsBtn.addEventListener('click', function() {
-                var textEl = document.getElementById('warden-ur-topic-text');
-                if (!textEl || !textEl.value) { alert('请先扫描页面！'); return; }
-                if (copyToClipboard(textEl.value)) {
-                    addUrLogEntry('info', '主题列表已复制到剪贴板');
+                var checked = getCheckedUrTopics();
+                if (checked.length === 0) { alert('请先扫描页面并勾选主题！'); return; }
+                if (copyToClipboard(checked.join('\n'))) {
+                    addUrLogEntry('info', '已复制 ' + checked.length + ' 个主题到剪贴板');
                 }
             });
         }
 
-        // 批量单锁定主题
+        // 批量单锁定已选主题
         var lockUrTopicsBtn = document.getElementById('warden-btn-lock-ur-topics');
         if (lockUrTopicsBtn) {
             lockUrTopicsBtn.addEventListener('click', function() {
-                if (USER_REPLY_ENGINE.topics.length === 0) { alert('请先扫描页面！'); return; }
-                if (!confirm('确定要对 ' + USER_REPLY_ENGINE.topics.length + ' 个主题执行【单锁定】操作吗？')) return;
+                var checked = getCheckedUrTopics();
+                if (checked.length === 0) { alert('请先扫描页面并勾选主题！'); return; }
+                if (!confirm('确定要对 ' + checked.length + ' 个主题执行【单锁定】操作吗？')) return;
                 var delayEl = document.getElementById('warden-ur-op-delay');
                 var delay = delayEl ? parseInt(delayEl.value) || 100 : 100;
-                USER_REPLY_ENGINE.executeLockTopics(delay);
+                USER_REPLY_ENGINE.executeLockTopics(checked, delay);
             });
         }
 
