@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.0.9
+// @version      1.1.0
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -145,6 +145,7 @@
     var KEY_SCORE_SETTINGS = STORAGE_PREFIX + 'score_settings';
     var KEY_SCORE_RUNNING = STORAGE_PREFIX + 'score_running';
     var KEY_SCORE_LOG = STORAGE_PREFIX + 'score_log';
+    var KEY_APP_SETTINGS = STORAGE_PREFIX + 'app_settings';
 
     // ===================================
     // 默认设置
@@ -279,6 +280,47 @@
         try {
             localStorage.setItem(KEY_SCORE_LOG, JSON.stringify([]));
         } catch (e) {}
+    }
+
+    // ===================================
+    // 应用设置管理
+    // ===================================
+    var DEFAULT_APP_SETTINGS = {
+        removeLoginBtn: false  // 删除登录按钮
+    };
+
+    function loadAppSettings() {
+        try {
+            var raw = localStorage.getItem(KEY_APP_SETTINGS);
+            if (raw) {
+                var saved = JSON.parse(raw);
+                var result = {};
+                for (var k in DEFAULT_APP_SETTINGS) {
+                    if (DEFAULT_APP_SETTINGS.hasOwnProperty(k)) {
+                        result[k] = saved.hasOwnProperty(k) ? saved[k] : DEFAULT_APP_SETTINGS[k];
+                    }
+                }
+                return result;
+            }
+        } catch (e) {}
+        return JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS));
+    }
+
+    function saveAppSettings(settings) {
+        try {
+            localStorage.setItem(KEY_APP_SETTINGS, JSON.stringify(settings));
+        } catch (e) {}
+    }
+
+    function applyRemoveLoginBtn(enabled) {
+        // 查找导航栏中的登录按钮
+        var loginLinks = document.querySelectorAll('a.mmdefault.gray[title="登录"], a.mmdefault[title="登录"]');
+        for (var i = 0; i < loginLinks.length; i++) {
+            var td = loginLinks[i].parentNode;
+            if (td && td.className.indexOf('td') !== -1) {
+                td.style.display = enabled ? 'none' : '';
+            }
+        }
     }
 
     // ===================================
@@ -1039,6 +1081,17 @@
                     '</div>' +
                     // ---- 页面3: 设置 ----
                     '<div class="warden-page" data-page="3">' +
+                        '<div class="warden-section">' +
+                            '<h3>设置</h3>' +
+                            '<div class="warden-form-row">' +
+                                '<label>删除登录按钮:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" id="warden-setting-remove-login">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">开启后移除导航栏中的"登录"按钮</span>' +
+                            '</div>' +
+                        '</div>' +
                         '<div class="warden-section">' +
                             '<h3>关于</h3>' +
                             '<div class="settings-row"><span class="settings-label">NGA版主管理增强工具</span></div>' +
@@ -1823,6 +1876,13 @@
             updatePageInfoUI();
             loadSettingsToForm();
         }
+        if (index === 3) {
+            // 刷新设置页的开关状态
+            var removeLoginToggle = document.getElementById('warden-setting-remove-login');
+            if (removeLoginToggle) {
+                removeLoginToggle.checked = loadAppSettings().removeLoginBtn;
+            }
+        }
     }
 
     // ===================================
@@ -2056,6 +2116,25 @@
             });
         }
 
+        // ========== 设置页事件 ==========
+
+        // 删除登录按钮开关
+        var removeLoginToggle = document.getElementById('warden-setting-remove-login');
+        if (removeLoginToggle) {
+            // 加载当前设置状态
+            var appSettings = loadAppSettings();
+            removeLoginToggle.checked = appSettings.removeLoginBtn;
+
+            removeLoginToggle.addEventListener('change', function() {
+                appSettings.removeLoginBtn = this.checked;
+                saveAppSettings(appSettings);
+                applyRemoveLoginBtn(this.checked);
+                if (this.checked) {
+                    addScoreLogEntry('info', '已开启：删除登录按钮');
+                }
+            });
+        }
+
         // ESC关闭面板
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
@@ -2077,6 +2156,11 @@
         try {
             createPanel();
             bindEvents();
+
+            // 应用初始设置
+            var appSettings = loadAppSettings();
+            applyRemoveLoginBtn(appSettings.removeLoginBtn);
+
             var btnWrap = createOpenButton();
             btnWrap.addEventListener('click', showPanel);
 
