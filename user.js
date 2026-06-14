@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.0
+// @version      1.1.1
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -157,6 +157,7 @@
         addPrestige: false,// 增加威望（默认关闭）
         sendPM: true,      // 给作者发送PM（默认开启）
         reason: '',        // 加分理由
+        onlyAttachment: false, // 只加分包含附件的楼层
         maxPages: 0,       // 加分页数量，包括当前页，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
         delay: 50          // 每次加分间隔(ms)
@@ -369,7 +370,13 @@
             var pidMatch = pidEl.id.match(/^pid(\d+)/);
             if (!pidMatch) continue;
             var pid = pidMatch[1];
-            floors.push({ floor: floor, pid: pid });
+            // 获取回复人用户名
+            var username = '';
+            var authorEl = row.querySelector('.userlink.author, [id^="postauthor"]');
+            if (authorEl) { username = authorEl.textContent || ''; }
+            // 检测是否包含附件: postattach{N} 元素存在
+            var hasAttachment = !!document.getElementById('postattach' + floor);
+            floors.push({ floor: floor, pid: pid, username: username, hasAttachment: hasAttachment });
         }
         return floors;
     }
@@ -484,6 +491,11 @@
                 // 如果设定了停止楼层，跳过超过的
                 if (settings.stopFloor > 0 && f.floor > settings.stopFloor) {
                     addScoreLogEntry('info', '楼层#' + f.floor + ' 超出停止楼层，跳过');
+                    continue;
+                }
+                // 如果开启了只加分附件楼层，跳过无附件的
+                if (settings.onlyAttachment && !f.hasAttachment) {
+                    addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 不含附件，跳过');
                     continue;
                 }
                 // 跳过已处理的
@@ -1183,6 +1195,19 @@
 
         html += '</div>'; // end warden-section
 
+        // 高级设置
+        html += '<div class="warden-section">';
+        html += '<h3>高级设置</h3>';
+        html += '<div class="warden-form-row">';
+        html += '<label>只加分含附件楼层:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-score-only-attach">';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
+        html += '<span style="font-size:11px;color:#8b6914;">开启后仅对包含附件的楼层加分（只有图片无附件不算,防止表情包刷分）</span>';
+        html += '</div>';
+        html += '</div>';
+
         // 当前页面信息
         html += '<div class="warden-section">';
         html += '<h3>当前页面信息</h3>';
@@ -1789,6 +1814,8 @@
         if (delayEl) delayEl.value = settings.delay || 50;
         if (maxPagesEl) maxPagesEl.value = settings.maxPages || 0;
         if (stopFloorEl) stopFloorEl.value = settings.stopFloor || 0;
+        var onlyAttachEl = document.getElementById('warden-score-only-attach');
+        if (onlyAttachEl) onlyAttachEl.checked = settings.onlyAttachment === true;
     }
 
     function collectSettingsFromForm() {
@@ -1802,6 +1829,7 @@
         var delayEl = document.getElementById('warden-score-delay');
         var maxPagesEl = document.getElementById('warden-score-maxpages');
         var stopFloorEl = document.getElementById('warden-score-stopfloor');
+        var onlyAttachEl = document.getElementById('warden-score-only-attach');
 
         settings.tid = tidEl ? tidEl.value.trim() : '';
         settings.scoreValue = valueEl ? valueEl.value.trim() : '0';
@@ -1809,6 +1837,7 @@
         settings.addPrestige = prestigeEl ? prestigeEl.checked : true;
         settings.sendPM = pmEl ? pmEl.checked : true;
         settings.reason = reasonEl ? reasonEl.value.trim() : '';
+        settings.onlyAttachment = onlyAttachEl ? onlyAttachEl.checked : false;
         settings.delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
         settings.maxPages = maxPagesEl ? parseInt(maxPagesEl.value) || 0 : 0;
         settings.stopFloor = stopFloorEl ? parseInt(stopFloorEl.value) || 0 : 0;
