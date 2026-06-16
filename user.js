@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.2
+// @version      1.1.3
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -556,12 +556,15 @@
                         self.processedFloors.push(floor.floor);
                         result.processed++;
 
-                        // 更新运行状态
+                        // 更新运行状态（仅增量更新已处理楼层，保留其他字段）
+                        var curRS = loadRunningState();
                         saveRunningState({
                             tid: tid,
                             currentPage: currentPage,
+                            startPage: curRS ? curRS.startPage : currentPage,
                             processedFloors: self.processedFloors,
-                            processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0) + 1
+                            processedCount: (curRS ? (curRS.processedCount || 0) : 0) + 1,
+                            lastFloorSet: curRS ? (curRS.lastFloorSet || '') : ''
                         });
 
                         // 检查是否到达停止楼层
@@ -690,13 +693,15 @@
                 updateScoreStatusUI('running', '正在处理第 ' + currentPage + ' 页 (起始第' + startPage + '页, 共加' + (settings.maxPages || '∞') + '页)...');
                 addScoreLogEntry('info', '--- 开始处理第 ' + currentPage + ' 页 ---');
 
-                // 更新运行状态
+                // 更新运行状态（保留lastFloorSet防止被覆盖丢失）
+                var prevRS = loadRunningState();
                 saveRunningState({
                     tid: tid,
                     currentPage: currentPage,
                     startPage: startPage,
                     processedFloors: self.processedFloors,
-                    processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0)
+                    processedCount: prevRS ? (prevRS.processedCount || 0) : 0,
+                    lastFloorSet: prevRS ? (prevRS.lastFloorSet || '') : ''
                 });
 
                 self.processCurrentPage()
@@ -732,13 +737,27 @@
                             return;
                         }
 
-                        // 检查是否有更多页
+                        // 检查是否有更多页/是否已过最后一页
                         var floors = getCurrentPageFloors();
-                        if (floors.length === 0 && result.processed === 0) {
+                        // 情况1: 页面完全没有楼层
+                        if (floors.length === 0) {
                             self.isRunning = false;
                             clearRunningState();
                             updateScoreStatusUI('done', '批量加分完成！已处理到最后一页');
                             addScoreLogEntry('info', '========== 批量加分完成(已到最后一页) ==========');
+                            updateControlButtons(false);
+                            scheduleScorePageRefresh();
+                            return;
+                        }
+                        // 情况2: 页面内容与上一页完全相同（NGA将超范围page返回最后一页）
+                        // 比较当前页与上一页的楼层集合，若完全一致则已到底
+                        var prevFloorSet = (loadRunningState() || {}).lastFloorSet || '';
+                        var curFloorSet = floors.map(function(f) { return f.floor; }).sort(function(a, b) { return a - b; }).join(',');
+                        if (prevFloorSet && prevFloorSet === curFloorSet) {
+                            self.isRunning = false;
+                            clearRunningState();
+                            updateScoreStatusUI('done', '批量加分完成！已到达最后一页');
+                            addScoreLogEntry('info', '========== 批量加分完成(最后一页,页面内容重复) ==========');
                             updateControlButtons(false);
                             scheduleScorePageRefresh();
                             return;
@@ -766,12 +785,16 @@
 
                         // 更新运行状态为下一页，然后跳转
                         var nextPage = currentPage + 1;
+                        // 保存当前页楼层集合签名，用于下一页检测内容是否重复（防死循环）
+                        var curFloors = getCurrentPageFloors();
+                        var curSet = curFloors.map(function(f) { return f.floor; }).sort(function(a, b) { return a - b; }).join(',');
                         saveRunningState({
                             tid: tid,
                             currentPage: nextPage,
                             startPage: startPage,
                             processedFloors: self.processedFloors,
-                            processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0)
+                            processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0),
+                            lastFloorSet: curSet
                         });
                         addScoreLogEntry('info', '正在跳转到第 ' + nextPage + ' 页...');
                         self.navigateToPage(tid, nextPage);
