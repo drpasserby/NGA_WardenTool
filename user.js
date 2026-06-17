@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.3
+// @version      1.1.4
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -158,8 +158,10 @@
         sendPM: true,      // 给作者发送PM（默认开启）
         reason: '',        // 加分理由
         onlyAttachment: false, // 只加分包含附件的楼层
-        filterKeywords: '',  // 关键词筛选，多个用顿号、分隔
-        filterKeywordEnabled: false, // 是否启用关键词筛选
+        filterKeywords: '',  // 包含关键词，多个用顿号、分隔
+        filterKeywordEnabled: false, // 启用包含关键词加分
+        excludeKeywords: '', // 排除关键词，多个用顿号、分隔
+        excludeKeywordEnabled: false, // 启用排除关键词加分
         maxPages: 0,       // 加分页数量，包括当前页，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
         delay: 50          // 每次加分间隔(ms)
@@ -518,6 +520,23 @@
                     }
                     if (!matched) {
                         addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 不含指定关键词，跳过');
+                        continue;
+                    }
+                }
+                // 如果开启了排除关键词，跳过包含排除关键词的楼层
+                if (settings.excludeKeywordEnabled && settings.excludeKeywords) {
+                    var exKeywords = settings.excludeKeywords.split('、');
+                    var exMatched = false;
+                    var exContent = f.postContent || '';
+                    for (var ei = 0; ei < exKeywords.length; ei++) {
+                        var ekw = exKeywords[ei].trim().toLowerCase();
+                        if (ekw && exContent.indexOf(ekw) !== -1) {
+                            exMatched = true;
+                            break;
+                        }
+                    }
+                    if (exMatched) {
+                        addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 命中排除关键词，跳过');
                         continue;
                     }
                 }
@@ -1266,6 +1285,20 @@
         html += '<label>关键词列表:</label>';
         html += '<input type="text" class="warden-input" id="warden-score-keywords" placeholder="多个关键词用中文顿号、分隔（如：抽奖、roll、roll点）">';
         html += '</div>';
+
+        // 排除关键词
+        html += '<div class="warden-form-row">';
+        html += '<label>排除关键词加分:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-score-exclude-keyword">';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
+        html += '<span style="font-size:11px;color:#8b6914;">开启后跳过包含指定关键词的楼层</span>';
+        html += '</div>';
+        html += '<div class="warden-form-row">';
+        html += '<label>排除关键词:</label>';
+        html += '<input type="text" class="warden-input" id="warden-score-exclude-keywords" placeholder="多个关键词用中文顿号、分隔（如：打卡、签到）">';
+        html += '</div>';
         html += '</div>';
 
         // 当前页面信息
@@ -1880,6 +1913,10 @@
         if (filterKwEl) filterKwEl.checked = settings.filterKeywordEnabled === true;
         var keywordsEl = document.getElementById('warden-score-keywords');
         if (keywordsEl) keywordsEl.value = settings.filterKeywords || '';
+        var excludeKwEl = document.getElementById('warden-score-exclude-keyword');
+        if (excludeKwEl) excludeKwEl.checked = settings.excludeKeywordEnabled === true;
+        var excludeKeywordsEl = document.getElementById('warden-score-exclude-keywords');
+        if (excludeKeywordsEl) excludeKeywordsEl.value = settings.excludeKeywords || '';
     }
 
     function collectSettingsFromForm() {
@@ -1896,6 +1933,8 @@
         var onlyAttachEl = document.getElementById('warden-score-only-attach');
         var filterKwEl = document.getElementById('warden-score-filter-keyword');
         var keywordsEl = document.getElementById('warden-score-keywords');
+        var excludeKwEl = document.getElementById('warden-score-exclude-keyword');
+        var excludeKeywordsEl = document.getElementById('warden-score-exclude-keywords');
 
         settings.tid = tidEl ? tidEl.value.trim() : '';
         settings.scoreValue = valueEl ? valueEl.value.trim() : '0';
@@ -1906,6 +1945,8 @@
         settings.onlyAttachment = onlyAttachEl ? onlyAttachEl.checked : false;
         settings.filterKeywordEnabled = filterKwEl ? filterKwEl.checked : false;
         settings.filterKeywords = keywordsEl ? keywordsEl.value.trim() : '';
+        settings.excludeKeywordEnabled = excludeKwEl ? excludeKwEl.checked : false;
+        settings.excludeKeywords = excludeKeywordsEl ? excludeKeywordsEl.value.trim() : '';
         settings.delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
         settings.maxPages = maxPagesEl ? parseInt(maxPagesEl.value) || 0 : 0;
         settings.stopFloor = stopFloorEl ? parseInt(stopFloorEl.value) || 0 : 0;
