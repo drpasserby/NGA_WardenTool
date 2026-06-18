@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.4
+// @version      1.1.5
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -291,7 +291,8 @@
     // 应用设置管理
     // ===================================
     var DEFAULT_APP_SETTINGS = {
-        removeLoginBtn: false  // 删除登录按钮
+        removeLoginBtn: false, // 删除登录按钮
+        enableHideAll: false   // 一键锁隐作者按钮
     };
 
     function loadAppSettings() {
@@ -318,7 +319,6 @@
     }
 
     function applyRemoveLoginBtn(enabled) {
-        // 查找导航栏中的登录按钮
         var loginLinks = document.querySelectorAll('a.mmdefault.gray[title="登录"], a.mmdefault[title="登录"]');
         for (var i = 0; i < loginLinks.length; i++) {
             var td = loginLinks[i].parentNode;
@@ -326,6 +326,127 @@
                 td.style.display = enabled ? 'none' : '';
             }
         }
+    }
+
+    // 一键锁隐作者：在每个楼层注入"锁隐all"按钮
+    var _hideAllInjected = false;
+    function injectHideAllButtons() {
+        if (_hideAllInjected) return;
+        // 仅在 read.php 页面且是管理员时注入
+        if (!getCurrentTid()) return;
+        if (!window.__GP || !window.__GP.admincheck) return;
+
+        var postInfos = document.querySelectorAll('.postInfo');
+        if (postInfos.length === 0) return;
+
+        // 取第一个按钮作为模板
+        var templateBtn = postInfos[0].querySelector('.small_colored_text_btn.block_txt_c0.stxt');
+        if (!templateBtn) return;
+
+        var uidElements = document.getElementsByName('uid');
+
+        for (var i = 0; i < postInfos.length; i++) {
+            var pi = postInfos[i];
+            // 跳过评论
+            if (pi.id && pi.id.indexOf('comment') === 0) continue;
+
+            var fp = pi.parentElement.id; // postInfo{N}
+            if (!fp) continue;
+            var fpMatch = fp.match(/\d+$/);
+            if (!fpMatch) continue;
+            var floor = parseInt(fpMatch[0]);
+            var uidIdx = floor % 20;
+            var uid = '';
+            if (uidElements[uidIdx]) {
+                uid = (uidElements[uidIdx].textContent || '').trim();
+            }
+            if (!uid) continue;
+
+            // 克隆按钮
+            var btn = templateBtn.cloneNode(true);
+            btn.innerHTML = '锁隐all';
+            btn.title = '锁隐该用户楼内全部回复';
+            btn.style.marginLeft = '0.5em';
+            btn.href = 'javascript:void(0)';
+            btn.onclick = (function(uidVal, tidVal) {
+                return function(e) {
+                    e.preventDefault();
+                    if (!confirm('将锁隐用户 ' + uidVal + ' 在该楼内的全部回复。是否继续？')) return;
+                    executeHideAll(uidVal, tidVal);
+                };
+            })(uid, getCurrentTid());
+
+            pi.appendChild(btn);
+        }
+        _hideAllInjected = true;
+    }
+
+    // 执行批量锁隐：获取该用户所有PID，批量发送锁隐请求
+    function executeHideAll(authorUid, tid) {
+        var allPids = [];
+        var fid = getCurrentFid();
+
+        function fetchPage(page) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/read.php?tid=' + tid + '&authorid=' + authorUid + '&__output=11&page=' + page, true);
+            xhr.timeout = 15000;
+            xhr.onload = function() {
+                if (xhr.status !== 200) { alert('获取回复列表失败'); return; }
+                try {
+                    var resp = JSON.parse(xhr.responseText);
+                    var data = resp.data;
+                    if (!data || !data.__R) { alert('解析回复数据失败'); return; }
+                    for (var i = 0; i < data.__R.length; i++) {
+                        allPids.push(data.__R[i].pid);
+                    }
+                    // 检查是否还有下一页
+                    if (data.__R__ROWS_PAGE && data.__ROWS && data.__R__ROWS_PAGE * page < data.__ROWS) {
+                        fetchPage(page + 1);
+                    } else {
+                        doBatchLockHide(allPids, tid, fid);
+                    }
+                } catch(e) {
+                    alert('解析失败: ' + e.message);
+                }
+            };
+            xhr.onerror = function() { alert('网络请求失败'); };
+            xhr.send();
+        }
+
+        fetchPage(1);
+    }
+
+    // 批量发送锁隐请求
+    function doBatchLockHide(pids, tid, fid) {
+        var total = pids.length;
+        if (total === 0) { alert('未找到该用户的回复'); return; }
+        alert('共找到 ' + total + ' 条回复，操作已加入队列。完成之前请勿刷新页面。');
+
+        var processed = 0, errors = 0;
+
+        function processNext(index) {
+            if (index >= total) {
+                alert('操作完毕！成功' + processed + '条, 失败' + errors + '条。PIDs: ' + pids.join(' '));
+                return;
+            }
+            var pid = pids[index];
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/nuke.php', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.timeout = 15000;
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    try { var r = JSON.parse(xhr.responseText); if (!r.error) processed++; else errors++; }
+                    catch(e) { processed++; }
+                } else { errors++; }
+                processNext(index + 1);
+            };
+            xhr.onerror = function() { errors++; processNext(index + 1); };
+            xhr.send('__lib=topic_lock&__act=set&ids=' + encodeURIComponent(tid + ',' + pid) +
+                     '&ton=0&toff=0&pon=1026&poff=0&pm=0&info=&raw=3');
+        }
+
+        processNext(0);
     }
 
     // ===================================
@@ -1167,6 +1288,14 @@
                                     '<span class="kw-slider"></span>' +
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">开启后移除导航栏中的"登录"按钮</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>一键锁隐作者:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" id="warden-setting-hideall">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">每个楼层添加"锁隐all"按钮，一键锁隐该用户楼内全部回复</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="warden-section">' +
@@ -2015,11 +2144,11 @@
             loadSettingsToForm();
         }
         if (index === 3) {
-            // 刷新设置页的开关状态
+            var as = loadAppSettings();
             var removeLoginToggle = document.getElementById('warden-setting-remove-login');
-            if (removeLoginToggle) {
-                removeLoginToggle.checked = loadAppSettings().removeLoginBtn;
-            }
+            if (removeLoginToggle) removeLoginToggle.checked = as.removeLoginBtn;
+            var hideAllToggle = document.getElementById('warden-setting-hideall');
+            if (hideAllToggle) hideAllToggle.checked = as.enableHideAll;
         }
     }
 
@@ -2273,6 +2402,24 @@
             });
         }
 
+        // 一键锁隐作者开关
+        var hideAllToggle = document.getElementById('warden-setting-hideall');
+        if (hideAllToggle) {
+            hideAllToggle.checked = loadAppSettings().enableHideAll;
+
+            hideAllToggle.addEventListener('change', function() {
+                var as = loadAppSettings();
+                as.enableHideAll = this.checked;
+                saveAppSettings(as);
+                if (this.checked) {
+                    injectHideAllButtons();
+                    addScoreLogEntry('info', '已开启：一键锁隐作者');
+                } else {
+                    addScoreLogEntry('info', '已关闭：一键锁隐作者，刷新页面后生效');
+                }
+            });
+        }
+
         // ESC关闭面板
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
@@ -2298,6 +2445,7 @@
             // 应用初始设置
             var appSettings = loadAppSettings();
             applyRemoveLoginBtn(appSettings.removeLoginBtn);
+            if (appSettings.enableHideAll) injectHideAllButtons();
 
             var btnWrap = createOpenButton();
             btnWrap.addEventListener('click', showPanel);
