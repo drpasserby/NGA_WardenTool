@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.5
+// @version      1.1.6
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -1101,6 +1101,7 @@
                          (pon == 16777216 && poff == 0) ? '下沉' :
                          (pon == 512 && poff == 0) ? '审核开' :
                          (pon == 0 && poff == 512) ? '审核关' :
+                         (pon == 0 && poff == 1026) ? '解除锁定隐藏' :
                          ('pon=' + pon + ' poff=' + poff);
 
             updateReplyStatusUI('running', '正在执行' + opName + '... (0/' + total + ')');
@@ -1502,6 +1503,7 @@
         html += '<option value="16777216:0">下沉 (pon=16777216)</option>';
         html += '<option value="512:0">审核开 (pon=512)</option>';
         html += '<option value="0:512">审核关 (poff=512)</option>';
+        html += '<option value="0:1026">解除锁定隐藏 (poff=1026)</option>';
         html += '</select>';
         html += '</div>';
 
