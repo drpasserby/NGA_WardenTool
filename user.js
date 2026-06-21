@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.6
+// @version      1.1.7
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -1094,15 +1094,10 @@
             var processed = 0;
             var errors = 0;
 
-            var opName = (pon == 1026 && poff == 0) ? '锁隐' :
-                         (pon == 1024 && poff == 0) ? '单锁定' :
-                         (pon == 2 && poff == 0) ? '单隐藏' :
-                         (pon == 128 && poff == 0) ? '编辑' :
-                         (pon == 16777216 && poff == 0) ? '下沉' :
-                         (pon == 512 && poff == 0) ? '审核开' :
-                         (pon == 0 && poff == 512) ? '审核关' :
-                         (pon == 0 && poff == 1026) ? '解除锁定隐藏' :
-                         ('pon=' + pon + ' poff=' + poff);
+            // 取操作码对应的名称
+            var opCode = pon || poff || 0;
+            var opNames = {1026:'锁定隐藏', 1024:'单锁定', 2:'单隐藏', 128:'编辑', 16777216:'下沉', 512:'审核', 16384:'屏蔽'};
+            var opName = (opNames[opCode] || ('码=' + opCode)) + (pon ? '[操作]' : '[解除]');
 
             updateReplyStatusUI('running', '正在执行' + opName + '... (0/' + total + ')');
             addReplyLogEntry('info', '========== 开始批量操作 ==========');
@@ -1496,15 +1491,24 @@
         html += '<div class="warden-form-row">';
         html += '<label>操作类型:</label>';
         html += '<select class="warden-input" id="warden-reply-op-type" style="width:auto;">';
-        html += '<option value="1026:0" selected>锁隐回复 (锁定+隐藏 pon=1026)</option>';
-        html += '<option value="1024:0">单锁定回复 (仅锁定 pon=1024)</option>';
-        html += '<option value="2:0">单隐藏回复 (仅隐藏 pon=2)</option>';
-        html += '<option value="128:0">编辑 (pon=128)</option>';
-        html += '<option value="16777216:0">下沉 (pon=16777216)</option>';
-        html += '<option value="512:0">审核开 (pon=512)</option>';
-        html += '<option value="0:512">审核关 (poff=512)</option>';
-        html += '<option value="0:1026">解除锁定隐藏 (poff=1026)</option>';
+        html += '<option value="1026" selected>锁定隐藏 (1026)</option>';
+        html += '<option value="1024">单锁定 (1024)</option>';
+        html += '<option value="2">单隐藏 (2)</option>';
+        html += '<option value="128">编辑 (128)</option>';
+        html += '<option value="16777216">下沉 (16777216)</option>';
+        html += '<option value="512">审核 (512)</option>';
+        html += '<option value="16384">屏蔽 (16384)</option>';
         html += '</select>';
+        html += '</div>';
+
+        // 操作/解除开关
+        html += '<div class="warden-form-row">';
+        html += '<label>操作/解除:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-reply-op-mode" checked>';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
+        html += '<span style="font-size:11px;color:#8b6914;" id="warden-reply-op-mode-label">操作(pon)</span>';
         html += '</div>';
 
         html += '<div class="warden-form-row">';
@@ -2233,6 +2237,15 @@
 
         // ========== 贴内批量操作事件 ==========
 
+        // 操作/解除切换时更新标签文字
+        var opModeToggle = document.getElementById('warden-reply-op-mode');
+        if (opModeToggle) {
+            opModeToggle.addEventListener('change', function() {
+                var label = document.getElementById('warden-reply-op-mode-label');
+                if (label) label.textContent = this.checked ? '操作(pon)' : '解除(poff)';
+            });
+        }
+
         // 扫描当前页回复
         var scanBtn = document.getElementById('warden-btn-scan-replies');
         if (scanBtn) {
@@ -2269,14 +2282,16 @@
                     return;
                 }
                 var ponEl = document.getElementById('warden-reply-op-type');
+                var modeEl = document.getElementById('warden-reply-op-mode');
                 var delayEl = document.getElementById('warden-reply-op-delay');
-                var ponVal = ponEl ? ponEl.value : '1026:0';
-                var parts = ponVal.split(':');
-                var pon = parseInt(parts[0]) || 0;
-                var poff = parseInt(parts[1]) || 0;
+                var opCode = parseInt(ponEl ? ponEl.value : 1026) || 0;
+                var isApply = modeEl ? modeEl.checked : true; // true=操作(pon), false=解除(poff)
+                var pon = isApply ? opCode : 0;
+                var poff = isApply ? 0 : opCode;
                 var delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
 
-                var opLabel = ponEl ? ponEl.options[ponEl.selectedIndex].text : '操作';
+                var opLabel = (ponEl ? ponEl.options[ponEl.selectedIndex].text : '操作') +
+                              (isApply ? '[操作]' : '[解除]');
 
                 if (!confirm('确定要对 ' + checkedList.length + ' 个回复执行【' + opLabel + '】吗？')) {
                     return;
