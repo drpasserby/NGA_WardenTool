@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.7
+// @version      1.1.8
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -291,8 +291,9 @@
     // 应用设置管理
     // ===================================
     var DEFAULT_APP_SETTINGS = {
-        removeLoginBtn: false, // 删除登录按钮
-        enableHideAll: false   // 一键锁隐作者按钮
+        removeLoginBtn: false,   // 删除登录按钮
+        enableHideAll: false,    // 一键锁隐作者按钮
+        removeWatermark: false   // 删除NGA水印
     };
 
     function loadAppSettings() {
@@ -325,6 +326,14 @@
             if (td && td.className.indexOf('td') !== -1) {
                 td.style.display = enabled ? 'none' : '';
             }
+        }
+    }
+
+    // 删除NGA水印：清除.c2元素的内联style
+    function applyRemoveWatermark() {
+        var c2Elements = document.getElementsByClassName('c2');
+        for (var i = 0; i < c2Elements.length; i++) {
+            c2Elements[i].setAttribute('style', '');
         }
     }
 
@@ -1293,6 +1302,14 @@
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">每个楼层添加"锁隐all"按钮，一键锁隐该用户楼内全部回复</span>' +
                             '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>删除NGA水印:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" id="warden-setting-watermark">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">开启后清除.c2元素内联样式，移除NGA页面的水印</span>' +
+                            '</div>' +
                         '</div>' +
                         '<div class="warden-section">' +
                             '<h3>关于</h3>' +
@@ -2155,6 +2172,8 @@
             if (removeLoginToggle) removeLoginToggle.checked = as.removeLoginBtn;
             var hideAllToggle = document.getElementById('warden-setting-hideall');
             if (hideAllToggle) hideAllToggle.checked = as.enableHideAll;
+            var watermarkToggle = document.getElementById('warden-setting-watermark');
+            if (watermarkToggle) watermarkToggle.checked = as.removeWatermark;
         }
     }
 
@@ -2437,6 +2456,22 @@
             });
         }
 
+        // 删除NGA水印开关
+        var watermarkToggle = document.getElementById('warden-setting-watermark');
+        if (watermarkToggle) {
+            watermarkToggle.checked = loadAppSettings().removeWatermark;
+
+            watermarkToggle.addEventListener('change', function() {
+                var as = loadAppSettings();
+                as.removeWatermark = this.checked;
+                saveAppSettings(as);
+                if (this.checked) {
+                    applyRemoveWatermark();
+                }
+                addScoreLogEntry('info', this.checked ? '已开启：删除NGA水印' : '已关闭：删除NGA水印，刷新页面后生效');
+            });
+        }
+
         // ESC关闭面板
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
@@ -2463,6 +2498,7 @@
             var appSettings = loadAppSettings();
             applyRemoveLoginBtn(appSettings.removeLoginBtn);
             if (appSettings.enableHideAll) injectHideAllButtons();
+            if (appSettings.removeWatermark) applyRemoveWatermark();
 
             var btnWrap = createOpenButton();
             btnWrap.addEventListener('click', showPanel);
