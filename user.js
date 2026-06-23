@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.8
+// @version      1.1.9
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -293,7 +293,8 @@
     var DEFAULT_APP_SETTINGS = {
         removeLoginBtn: false,   // 删除登录按钮
         enableHideAll: false,    // 一键锁隐作者按钮
-        removeWatermark: false   // 删除NGA水印
+        removeWatermark: false,  // 删除NGA水印
+        showVotes: false         // 查看赞踩比
     };
 
     function loadAppSettings() {
@@ -335,6 +336,30 @@
         for (var i = 0; i < c2Elements.length; i++) {
             c2Elements[i].setAttribute('style', '');
         }
+    }
+
+    // 查看赞踩比：在每层显示like/dislike计数
+    var _votesInjected = false;
+    function applyShowVotes() {
+        if (_votesInjected) return;
+        if (!window.commonui || !commonui.postArg || !commonui.postArg.data) return;
+        for (var key in commonui.postArg.data) {
+            var ll = document.getElementById('postcontentandsubject' + key);
+            if (!ll) { ll = document.getElementById('postcommentcontentandsubject' + key); }
+            if (!ll) { ll = document.getElementById('postcomment_' + key); }
+            if (!ll) continue;
+            var whiteEls = ll.getElementsByClassName('white');
+            for (var i = 0; i < whiteEls.length; i++) {
+                if (whiteEls[i].getAttribute('title') === '反对') {
+                    var span = document.createElement('span');
+                    span.innerHTML = '&nbsp;&nbsp;&nbsp;赞:' + commonui.postArg.data[key].score + '&nbsp;/&nbsp;踩:' + commonui.postArg.data[key].score_2;
+                    span.classList.add('white');
+                    span.title = '只能在有对应版面的权限才能看到这个点踩数';
+                    whiteEls[i].parentNode.appendChild(span, whiteEls[i]);
+                }
+            }
+        }
+        _votesInjected = true;
     }
 
     // 一键锁隐作者：在每个楼层注入"锁隐all"按钮
@@ -1310,6 +1335,14 @@
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">开启后清除.c2元素内联样式，移除NGA页面的水印</span>' +
                             '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>查看赞踩比:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" id="warden-setting-votes">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">开启后每个楼层显示赞/踩计数（需在read.php页面使用）</span>' +
+                            '</div>' +
                         '</div>' +
                         '<div class="warden-section">' +
                             '<h3>关于</h3>' +
@@ -2174,6 +2207,8 @@
             if (hideAllToggle) hideAllToggle.checked = as.enableHideAll;
             var watermarkToggle = document.getElementById('warden-setting-watermark');
             if (watermarkToggle) watermarkToggle.checked = as.removeWatermark;
+            var votesToggle = document.getElementById('warden-setting-votes');
+            if (votesToggle) votesToggle.checked = as.showVotes;
         }
     }
 
@@ -2472,6 +2507,22 @@
             });
         }
 
+        // 查看赞踩比开关
+        var votesToggle = document.getElementById('warden-setting-votes');
+        if (votesToggle) {
+            votesToggle.checked = loadAppSettings().showVotes;
+
+            votesToggle.addEventListener('change', function() {
+                var as = loadAppSettings();
+                as.showVotes = this.checked;
+                saveAppSettings(as);
+                if (this.checked) {
+                    applyShowVotes();
+                }
+                addScoreLogEntry('info', this.checked ? '已开启：查看赞踩比' : '已关闭：查看赞踩比，刷新页面后生效');
+            });
+        }
+
         // ESC关闭面板
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
@@ -2499,6 +2550,7 @@
             applyRemoveLoginBtn(appSettings.removeLoginBtn);
             if (appSettings.enableHideAll) injectHideAllButtons();
             if (appSettings.removeWatermark) applyRemoveWatermark();
+            if (appSettings.showVotes) applyShowVotes();
 
             var btnWrap = createOpenButton();
             btnWrap.addEventListener('click', showPanel);
