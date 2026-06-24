@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.1.9
+// @version      1.2.0
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -294,7 +294,8 @@
         removeLoginBtn: false,   // 删除登录按钮
         enableHideAll: false,    // 一键锁隐作者按钮
         removeWatermark: false,  // 删除NGA水印
-        showVotes: false         // 查看赞踩比
+        showVotes: false,        // 查看赞踩比
+        showPrivateNotes: false  // 显示非公开备注
     };
 
     function loadAppSettings() {
@@ -360,6 +361,42 @@
             }
         }
         _votesInjected = true;
+    }
+
+    // 显示非公开备注：将版主备注始终可见，修改提示文字
+    function applyShowPrivateNotes() {
+        // 需要GREATER权限
+        if (!window.__GP || !window.__GP.greater) return;
+
+        setTimeout(function() {
+            if (document.location.href.indexOf('read.php') !== -1) {
+                var blocks = document.querySelectorAll('.block_txt_c3');
+                for (var i = 0; i < blocks.length; i++) {
+                    if (blocks[i].className === 'block_txt block_txt_c3 nobr' && blocks[i].title.indexOf('公开备注') === -1) {
+                        blocks[i].onmouseout = '';
+                        blocks[i].title = '非公开的备注 仅版主可见';
+                        blocks[i].firstChild.style = '';
+                    }
+                }
+            } else {
+                var grayBlocks = document.querySelectorAll('.gray');
+                var intent;
+                for (var j = 0; j < grayBlocks.length; j++) {
+                    if (grayBlocks[j].innerHTML === '版主可见,用户信息备忘,添加/删除备注可能在一天后方能生效') {
+                        intent = grayBlocks[j].parentNode.children[1].children[0].children;
+                        break;
+                    }
+                }
+                if (!intent) return;
+                for (var k = 0; k < intent.length; k++) {
+                    if (intent[k].onmouseout !== null) {
+                        intent[k].title = '非公开的备注 仅版主可见';
+                        intent[k].onmouseout = '';
+                        intent[k].firstChild.style = '';
+                    }
+                }
+            }
+        }, 100);
     }
 
     // 一键锁隐作者：在每个楼层注入"锁隐all"按钮
@@ -1343,6 +1380,14 @@
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">开启后每个楼层显示赞/踩计数（需在read.php页面使用）</span>' +
                             '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>显示非公开备注:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" id="warden-setting-notes">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">将版主备注始终可见，无需鼠标悬停（需GREATER权限）</span>' +
+                            '</div>' +
                         '</div>' +
                         '<div class="warden-section">' +
                             '<h3>关于</h3>' +
@@ -2209,6 +2254,8 @@
             if (watermarkToggle) watermarkToggle.checked = as.removeWatermark;
             var votesToggle = document.getElementById('warden-setting-votes');
             if (votesToggle) votesToggle.checked = as.showVotes;
+            var notesToggle = document.getElementById('warden-setting-notes');
+            if (notesToggle) notesToggle.checked = as.showPrivateNotes;
         }
     }
 
@@ -2523,6 +2570,22 @@
             });
         }
 
+        // 显示非公开备注开关
+        var notesToggle = document.getElementById('warden-setting-notes');
+        if (notesToggle) {
+            notesToggle.checked = loadAppSettings().showPrivateNotes;
+
+            notesToggle.addEventListener('change', function() {
+                var as = loadAppSettings();
+                as.showPrivateNotes = this.checked;
+                saveAppSettings(as);
+                if (this.checked) {
+                    applyShowPrivateNotes();
+                }
+                addScoreLogEntry('info', this.checked ? '已开启：显示非公开备注' : '已关闭：显示非公开备注，刷新页面后生效');
+            });
+        }
+
         // ESC关闭面板
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
@@ -2551,6 +2614,7 @@
             if (appSettings.enableHideAll) injectHideAllButtons();
             if (appSettings.removeWatermark) applyRemoveWatermark();
             if (appSettings.showVotes) applyShowVotes();
+            if (appSettings.showPrivateNotes) applyShowPrivateNotes();
 
             var btnWrap = createOpenButton();
             btnWrap.addEventListener('click', showPanel);
