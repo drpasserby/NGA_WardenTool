@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.1
+// @version      1.2.2
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -162,6 +162,7 @@
         filterKeywordEnabled: false, // 启用包含关键词加分
         excludeKeywords: '', // 排除关键词，多个用顿号、分隔
         excludeKeywordEnabled: false, // 启用排除关键词加分
+        singleScorePerUser: false, // 单次加分开关：同一用户仅加分一次
         maxPages: 0,       // 加分页数量，包括当前页，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
         delay: 50          // 每次加分间隔(ms)
@@ -566,17 +567,19 @@
             var pidMatch = pidEl.id.match(/^pid(\d+)/);
             if (!pidMatch) continue;
             var pid = pidMatch[1];
-            // 获取回复人用户名
-            var username = '';
+            // 获取回复人用户名和UID
+            var username = '', authorUid = '';
             var authorEl = row.querySelector('.userlink.author, [id^="postauthor"]');
             if (authorEl) { username = authorEl.textContent || ''; }
+            var uidEl = row.querySelector('[name="uid"]');
+            if (uidEl) { authorUid = (uidEl.textContent || '').trim(); }
             // 检测是否包含附件: postattach{N} 元素存在
             var hasAttachment = !!document.getElementById('postattach' + floor);
             // 获取回复内容文本（用于关键词匹配）
             var postContent = '';
             var contentEl = document.getElementById('postcontent' + floor);
             if (contentEl) { postContent = (contentEl.textContent || '').toLowerCase(); }
-            floors.push({ floor: floor, pid: pid, username: username, hasAttachment: hasAttachment, postContent: postContent });
+            floors.push({ floor: floor, pid: pid, username: username, authorUid: authorUid, hasAttachment: hasAttachment, postContent: postContent });
         }
         return floors;
     }
@@ -732,6 +735,13 @@
                         continue;
                     }
                 }
+                // 如果开启了单次加分，同一用户仅加分一次
+                if (settings.singleScorePerUser && f.authorUid) {
+                    if (self.scoredUids.indexOf(f.authorUid) !== -1) {
+                        addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 用户' + f.username + '已加分过，跳过');
+                        continue;
+                    }
+                }
                 // 跳过已处理的
                 if (self.processedFloors.indexOf(f.floor) >= 0) {
                     addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 已处理，跳过');
@@ -765,6 +775,9 @@
                     .then(function(resp) {
                         addScoreLogEntry('success', '楼层#' + floor.floor + ' (PID:' + floor.pid + ') 加分成功!');
                         self.processedFloors.push(floor.floor);
+                        if (floor.authorUid && self.scoredUids.indexOf(floor.authorUid) === -1) {
+                            self.scoredUids.push(floor.authorUid);
+                        }
                         result.processed++;
 
                         // 更新运行状态（仅增量更新已处理楼层，保留其他字段）
@@ -824,6 +837,7 @@
             self.isRunning = true;
             self.stopRequested = false;
             self.processedFloors = [];
+            self.scoredUids = [];  // 单次加分已处理的UID列表
             self.currentPage = 0;
 
             // 清除旧日志（每次启动新加分任务时清空日志）
@@ -1519,6 +1533,16 @@
         html += '<label>排除关键词:</label>';
         html += '<input type="text" class="warden-input" id="warden-score-exclude-keywords" placeholder="多个关键词用中文顿号、分隔（如：打卡、签到）">';
         html += '</div>';
+
+        // 单次加分开关
+        html += '<div class="warden-form-row">';
+        html += '<label>单次加分开关:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-score-single-user">';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
+        html += '<span style="font-size:11px;color:#8b6914;">同一用户仅加分一次，检测到已加分用户则跳过（仅对本次加分有效）</span>';
+        html += '</div>';
         html += '</div>';
 
         // 当前页面信息
@@ -2147,6 +2171,8 @@
         if (excludeKwEl) excludeKwEl.checked = settings.excludeKeywordEnabled === true;
         var excludeKeywordsEl = document.getElementById('warden-score-exclude-keywords');
         if (excludeKeywordsEl) excludeKeywordsEl.value = settings.excludeKeywords || '';
+        var singleUserEl = document.getElementById('warden-score-single-user');
+        if (singleUserEl) singleUserEl.checked = settings.singleScorePerUser === true;
     }
 
     function collectSettingsFromForm() {
@@ -2165,6 +2191,7 @@
         var keywordsEl = document.getElementById('warden-score-keywords');
         var excludeKwEl = document.getElementById('warden-score-exclude-keyword');
         var excludeKeywordsEl = document.getElementById('warden-score-exclude-keywords');
+        var singleUserEl = document.getElementById('warden-score-single-user');
 
         settings.tid = tidEl ? tidEl.value.trim() : '';
         settings.scoreValue = valueEl ? valueEl.value.trim() : '0';
@@ -2177,6 +2204,7 @@
         settings.filterKeywords = keywordsEl ? keywordsEl.value.trim() : '';
         settings.excludeKeywordEnabled = excludeKwEl ? excludeKwEl.checked : false;
         settings.excludeKeywords = excludeKeywordsEl ? excludeKeywordsEl.value.trim() : '';
+        settings.singleScorePerUser = singleUserEl ? singleUserEl.checked : false;
         settings.delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
         settings.maxPages = maxPagesEl ? parseInt(maxPagesEl.value) || 0 : 0;
         settings.stopFloor = stopFloorEl ? parseInt(stopFloorEl.value) || 0 : 0;
