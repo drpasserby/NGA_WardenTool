@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.0
+// @version      1.2.1
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -335,7 +335,7 @@
     function applyRemoveWatermark() {
         var c2Elements = document.getElementsByClassName('c2');
         for (var i = 0; i < c2Elements.length; i++) {
-            c2Elements[i].setAttribute('style', '');
+            c2Elements[i].setAttribute('style', 'vertical-align:top');
         }
     }
 
