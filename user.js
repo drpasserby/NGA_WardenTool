@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.2
+// @version      1.2.3
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -567,12 +567,20 @@
             var pidMatch = pidEl.id.match(/^pid(\d+)/);
             if (!pidMatch) continue;
             var pid = pidMatch[1];
-            // 获取回复人用户名和UID
+            // 获取回复人用户名和UID（多渠道兜底）
             var username = '', authorUid = '';
+            // 方案1: 在row内查找 .userlink.author 或 [id^="postauthor"]
             var authorEl = row.querySelector('.userlink.author, [id^="postauthor"]');
-            if (authorEl) { username = authorEl.textContent || ''; }
-            var uidEl = row.querySelector('[name="uid"]');
-            if (uidEl) { authorUid = (uidEl.textContent || '').trim(); }
+            // 方案2: 通过全局ID postauthor{N} 查找
+            if (!authorEl) { authorEl = document.getElementById('postauthor' + floor); }
+            if (authorEl) {
+                username = (authorEl.textContent || authorEl.innerText || '').replace('楼主', '').trim();
+                authorUid = authorEl.getAttribute('data-nga-wd-hover-uid') || '';
+                if (!authorUid) {
+                    var hrefMatch = (authorEl.getAttribute('href') || '').match(/uid=(\d+)/);
+                    if (hrefMatch) authorUid = hrefMatch[1];
+                }
+            }
             // 检测是否包含附件: postattach{N} 元素存在
             var hasAttachment = !!document.getElementById('postattach' + floor);
             // 获取回复内容文本（用于关键词匹配）
@@ -735,13 +743,6 @@
                         continue;
                     }
                 }
-                // 如果开启了单次加分，同一用户仅加分一次
-                if (settings.singleScorePerUser && f.authorUid) {
-                    if (self.scoredUids.indexOf(f.authorUid) !== -1) {
-                        addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 用户' + f.username + '已加分过，跳过');
-                        continue;
-                    }
-                }
                 // 跳过已处理的
                 if (self.processedFloors.indexOf(f.floor) >= 0) {
                     addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 已处理，跳过');
@@ -769,13 +770,44 @@
 
                 var floor = pendingFloors[index];
 
-                addScoreLogEntry('info', '正在加分: 楼层#' + floor.floor + ' (PID:' + floor.pid + ')...');
+                // 如果开启了单次加分且UID为空，尝试从DOM二次提取
+                if (settings.singleScorePerUser && !floor.authorUid) {
+                    var reAuthorEl = document.getElementById('postauthor' + floor.floor);
+                    if (reAuthorEl) {
+                        floor.authorUid = reAuthorEl.getAttribute('data-nga-wd-hover-uid') || '';
+                        if (!floor.authorUid) {
+                            var reMatch = (reAuthorEl.getAttribute('href') || '').match(/uid=(\d+)/);
+                            if (reMatch) floor.authorUid = reMatch[1];
+                        }
+                        if (!floor.authorUid) {
+                            var reUidEl = document.querySelector('[name="uid"]');
+                            if (reUidEl) floor.authorUid = (reUidEl.textContent || '').trim();
+                        }
+                        if (!floor.username) {
+                            floor.username = (reAuthorEl.textContent || '').replace('楼主', '').trim();
+                        }
+                    }
+                }
+
+                // 如果开启了单次加分，同一用户仅加分一次
+                if (settings.singleScorePerUser && floor.authorUid) {
+                    if ((self.scoredUids || []).indexOf(floor.authorUid) !== -1) {
+                        addScoreLogEntry('info', '楼层#' + floor.floor + ' (PID:' + floor.pid + ', UID:' + floor.authorUid + ') 用户' + (floor.username || floor.authorUid) + '已加分过，跳过');
+                        result.processed = (result.processed || 0);
+                        return sleepAsync(settings.delay).then(function() {
+                            return processNext(index + 1);
+                        });
+                    }
+                }
+
+                addScoreLogEntry('info', '正在加分: 楼层#' + floor.floor + ' (PID:' + floor.pid + (floor.authorUid ? ', UID:' + floor.authorUid : '') + ')...');
 
                 return self.scoreFloor(floor.pid, floor.floor, fid, tid, opt, settings.reason, scoreValue)
                     .then(function(resp) {
-                        addScoreLogEntry('success', '楼层#' + floor.floor + ' (PID:' + floor.pid + ') 加分成功!');
+                        addScoreLogEntry('success', '楼层#' + floor.floor + ' (PID:' + floor.pid + (floor.authorUid ? ', UID:' + floor.authorUid : '') + ') 加分成功!');
                         self.processedFloors.push(floor.floor);
-                        if (floor.authorUid && self.scoredUids.indexOf(floor.authorUid) === -1) {
+                        if (floor.authorUid && (self.scoredUids || []).indexOf(floor.authorUid) === -1) {
+                            if (!self.scoredUids) self.scoredUids = [];
                             self.scoredUids.push(floor.authorUid);
                         }
                         result.processed++;
@@ -787,6 +819,7 @@
                             currentPage: currentPage,
                             startPage: curRS ? curRS.startPage : currentPage,
                             processedFloors: self.processedFloors,
+                            scoredUids: self.scoredUids || [],
                             processedCount: (curRS ? (curRS.processedCount || 0) : 0) + 1,
                             lastFloorSet: curRS ? (curRS.lastFloorSet || '') : ''
                         });
@@ -807,7 +840,7 @@
                         });
                     })
                     .catch(function(err) {
-                        addScoreLogEntry('error', '楼层#' + floor.floor + ' (PID:' + floor.pid + ') 加分失败: ' + err.message);
+                        addScoreLogEntry('error', '楼层#' + floor.floor + ' (PID:' + floor.pid + (floor.authorUid ? ', UID:' + floor.authorUid : '') + ') 加分失败: ' + err.message);
                         result.errors++;
 
                         // 出错后也延迟再继续
@@ -878,6 +911,7 @@
                 currentPage: startPage,
                 startPage: startPage,
                 processedFloors: [],
+                scoredUids: [],
                 processedCount: 0,
                 startTime: Date.now()
             });
@@ -925,6 +959,7 @@
                     currentPage: currentPage,
                     startPage: startPage,
                     processedFloors: self.processedFloors,
+                    scoredUids: self.scoredUids || [],
                     processedCount: prevRS ? (prevRS.processedCount || 0) : 0,
                     lastFloorSet: prevRS ? (prevRS.lastFloorSet || '') : ''
                 });
@@ -1018,6 +1053,7 @@
                             currentPage: nextPage,
                             startPage: startPage,
                             processedFloors: self.processedFloors,
+                            scoredUids: self.scoredUids || [],
                             processedCount: (loadRunningState() ? (loadRunningState().processedCount || 0) : 0),
                             lastFloorSet: curSet
                         });
@@ -1060,6 +1096,7 @@
             self.isRunning = true;
             self.stopRequested = false;
             self.processedFloors = runningState.processedFloors || [];
+            self.scoredUids = runningState.scoredUids || [];
             self.currentPage = resumePage;
 
             addScoreLogEntry('info', '========== 恢复批量加分 ==========');
