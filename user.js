@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.3
+// @version      1.2.4
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -163,6 +163,7 @@
         excludeKeywords: '', // 排除关键词，多个用顿号、分隔
         excludeKeywordEnabled: false, // 启用排除关键词加分
         singleScorePerUser: false, // 单次加分开关：同一用户仅加分一次
+        skipCCQ: false,    // 被CCQ用户不加分（声望≤-501）
         maxPages: 0,       // 加分页数量，包括当前页，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
         delay: 50          // 每次加分间隔(ms)
@@ -587,7 +588,24 @@
             var postContent = '';
             var contentEl = document.getElementById('postcontent' + floor);
             if (contentEl) { postContent = (contentEl.textContent || '').toLowerCase(); }
-            floors.push({ floor: floor, pid: pid, username: username, authorUid: authorUid, hasAttachment: hasAttachment, postContent: postContent });
+            // 获取用户声望值（.userval.numericl中有(lv标记的是声望，如-300(lv-1)）
+            var reputation = 0;
+            var repEls = row.querySelectorAll('.userval.numericl');
+            for (var ri = 0; ri < repEls.length; ri++) {
+                var txt = repEls[ri].textContent || '';
+                if (txt.indexOf('(lv') !== -1 || txt.indexOf('lv') !== -1) {
+                    var repMatch = txt.match(/^(-?\d+)/);
+                    if (repMatch) reputation = parseInt(repMatch[0]);
+                    break;
+                }
+            }
+            // 如果没找到带lv标记的，取最后一个（声望通常在威望之后）
+            if (reputation === 0 && repEls.length > 0) {
+                var lastTxt = repEls[repEls.length - 1].textContent || '';
+                var lastMatch = lastTxt.match(/^(-?\d+)/);
+                if (lastMatch) reputation = parseInt(lastMatch[0]);
+            }
+            floors.push({ floor: floor, pid: pid, username: username, authorUid: authorUid, hasAttachment: hasAttachment, postContent: postContent, reputation: reputation });
         }
         return floors;
     }
@@ -742,6 +760,11 @@
                         addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 命中排除关键词，跳过');
                         continue;
                     }
+                }
+                // 如果开启了被CCQ用户不加分，声望≤-501则跳过
+                if (settings.skipCCQ && f.reputation <= -501) {
+                    addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ', 声望:' + f.reputation + ') 被CCQ，跳过');
+                    continue;
                 }
                 // 跳过已处理的
                 if (self.processedFloors.indexOf(f.floor) >= 0) {
@@ -1580,6 +1603,16 @@
         html += '</label>';
         html += '<span style="font-size:11px;color:#8b6914;">同一用户仅加分一次，检测到已加分用户则跳过（仅对本次加分有效）</span>';
         html += '</div>';
+
+        // 被CCQ用户不加分
+        html += '<div class="warden-form-row">';
+        html += '<label>被CCQ用户不加分:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-score-skip-ccq">';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
+        html += '<span style="font-size:11px;color:#8b6914;">版面声望≤-501的用户不执行加分</span>';
+        html += '</div>';
         html += '</div>';
 
         // 当前页面信息
@@ -2210,6 +2243,8 @@
         if (excludeKeywordsEl) excludeKeywordsEl.value = settings.excludeKeywords || '';
         var singleUserEl = document.getElementById('warden-score-single-user');
         if (singleUserEl) singleUserEl.checked = settings.singleScorePerUser === true;
+        var skipCCQEl = document.getElementById('warden-score-skip-ccq');
+        if (skipCCQEl) skipCCQEl.checked = settings.skipCCQ === true;
     }
 
     function collectSettingsFromForm() {
@@ -2229,6 +2264,7 @@
         var excludeKwEl = document.getElementById('warden-score-exclude-keyword');
         var excludeKeywordsEl = document.getElementById('warden-score-exclude-keywords');
         var singleUserEl = document.getElementById('warden-score-single-user');
+        var skipCCQEl = document.getElementById('warden-score-skip-ccq');
 
         settings.tid = tidEl ? tidEl.value.trim() : '';
         settings.scoreValue = valueEl ? valueEl.value.trim() : '0';
@@ -2242,6 +2278,7 @@
         settings.excludeKeywordEnabled = excludeKwEl ? excludeKwEl.checked : false;
         settings.excludeKeywords = excludeKeywordsEl ? excludeKeywordsEl.value.trim() : '';
         settings.singleScorePerUser = singleUserEl ? singleUserEl.checked : false;
+        settings.skipCCQ = skipCCQEl ? skipCCQEl.checked : false;
         settings.delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
         settings.maxPages = maxPagesEl ? parseInt(maxPagesEl.value) || 0 : 0;
         settings.stopFloor = stopFloorEl ? parseInt(stopFloorEl.value) || 0 : 0;
