@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.4
+// @version      1.2.5
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -164,6 +164,7 @@
         excludeKeywordEnabled: false, // 启用排除关键词加分
         singleScorePerUser: false, // 单次加分开关：同一用户仅加分一次
         skipCCQ: false,    // 被CCQ用户不加分（声望≤-501）
+        skipDeleted: false, // 跳过锁隐楼层（含"删除"标签的楼层不加分）
         maxPages: 0,       // 加分页数量，包括当前页，0表示不限制
         stopFloor: 0,      // 停止楼层，0表示不限制
         delay: 50          // 每次加分间隔(ms)
@@ -605,7 +606,13 @@
                 var lastMatch = lastTxt.match(/^(-?\d+)/);
                 if (lastMatch) reputation = parseInt(lastMatch[0]);
             }
-            floors.push({ floor: floor, pid: pid, username: username, authorUid: authorUid, hasAttachment: hasAttachment, postContent: postContent, reputation: reputation });
+            // 检测是否为锁隐/删除楼层（含"删除"标签）
+            var isDeleted = false;
+            var delEls = row.querySelectorAll('.block_txt.white');
+            for (var di = 0; di < delEls.length; di++) {
+                if ((delEls[di].textContent || '').trim() === '删除') { isDeleted = true; break; }
+            }
+            floors.push({ floor: floor, pid: pid, username: username, authorUid: authorUid, hasAttachment: hasAttachment, postContent: postContent, reputation: reputation, isDeleted: isDeleted });
         }
         return floors;
     }
@@ -764,6 +771,11 @@
                 // 如果开启了被CCQ用户不加分，声望≤-501则跳过
                 if (settings.skipCCQ && f.reputation <= -501) {
                     addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ', 声望:' + f.reputation + ') 被CCQ，跳过');
+                    continue;
+                }
+                // 如果开启了跳过锁隐楼层，含"删除"标签则跳过
+                if (settings.skipDeleted && f.isDeleted) {
+                    addScoreLogEntry('info', '楼层#' + f.floor + ' (PID:' + f.pid + ') 锁隐/删除，跳过');
                     continue;
                 }
                 // 跳过已处理的
@@ -1613,6 +1625,16 @@
         html += '</label>';
         html += '<span style="font-size:11px;color:#8b6914;">版面声望≤-501的用户不执行加分</span>';
         html += '</div>';
+
+        // 跳过锁隐楼层
+        html += '<div class="warden-form-row">';
+        html += '<label>跳过锁隐楼层:</label>';
+        html += '<label class="kw-toggle" style="flex:0 0 auto;">';
+        html += '<input type="checkbox" id="warden-score-skip-deleted">';
+        html += '<span class="kw-slider"></span>';
+        html += '</label>';
+        html += '<span style="font-size:11px;color:#8b6914;">包含"删除"标签的锁隐楼层不加分</span>';
+        html += '</div>';
         html += '</div>';
 
         // 当前页面信息
@@ -2245,6 +2267,8 @@
         if (singleUserEl) singleUserEl.checked = settings.singleScorePerUser === true;
         var skipCCQEl = document.getElementById('warden-score-skip-ccq');
         if (skipCCQEl) skipCCQEl.checked = settings.skipCCQ === true;
+        var skipDeletedEl = document.getElementById('warden-score-skip-deleted');
+        if (skipDeletedEl) skipDeletedEl.checked = settings.skipDeleted === true;
     }
 
     function collectSettingsFromForm() {
@@ -2265,6 +2289,7 @@
         var excludeKeywordsEl = document.getElementById('warden-score-exclude-keywords');
         var singleUserEl = document.getElementById('warden-score-single-user');
         var skipCCQEl = document.getElementById('warden-score-skip-ccq');
+        var skipDeletedEl = document.getElementById('warden-score-skip-deleted');
 
         settings.tid = tidEl ? tidEl.value.trim() : '';
         settings.scoreValue = valueEl ? valueEl.value.trim() : '0';
@@ -2279,6 +2304,7 @@
         settings.excludeKeywords = excludeKeywordsEl ? excludeKeywordsEl.value.trim() : '';
         settings.singleScorePerUser = singleUserEl ? singleUserEl.checked : false;
         settings.skipCCQ = skipCCQEl ? skipCCQEl.checked : false;
+        settings.skipDeleted = skipDeletedEl ? skipDeletedEl.checked : false;
         settings.delay = delayEl ? parseInt(delayEl.value) || 50 : 50;
         settings.maxPages = maxPagesEl ? parseInt(maxPagesEl.value) || 0 : 0;
         settings.stopFloor = stopFloorEl ? parseInt(stopFloorEl.value) || 0 : 0;
