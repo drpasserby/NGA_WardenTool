@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.6
+// @version      1.2.7
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -1426,7 +1426,8 @@
                     '<div class="tab-btn active" data-tab="0">批量加分</div>' +
                     '<div class="tab-btn" data-tab="1">贴内批量操作</div>' +
                     '<div class="tab-btn" data-tab="2">用户回复操作</div>' +
-                    '<div class="tab-btn" data-tab="3">设置</div>' +
+                    '<div class="tab-btn" data-tab="3">查看本帖举报</div>' +
+                    '<div class="tab-btn" data-tab="4">设置</div>' +
                 '</div>' +
                 '<div id="nga-warden-body">' +
                     // ---- 页面0: 批量加分 ----
@@ -1441,8 +1442,12 @@
                     '<div class="warden-page" data-page="2">' +
                         createUserReplyPageHTML() +
                     '</div>' +
-                    // ---- 页面3: 设置 ----
+                    // ---- 页面3: 查看本帖举报 ----
                     '<div class="warden-page" data-page="3">' +
+                        createThreadReportPageHTML() +
+                    '</div>' +
+                    // ---- 页面4: 设置 ----
+                    '<div class="warden-page" data-page="4">' +
                         '<div class="warden-section">' +
                             '<h3>设置</h3>' +
                             '<div class="warden-form-row">' +
@@ -2126,6 +2131,137 @@
     }
 
     // ===================================
+    // UI: 查看本帖举报页面
+    // ===================================
+    function createThreadReportPageHTML() {
+        var html = '';
+        html += '<div class="warden-section">';
+        html += '<h3>查看本帖举报</h3>';
+        html += '<p style="font-size:12px;color:#8b6914;">获取当前帖子的举报信息。在帖子页面（read.php）中使用。</p>';
+        html += '</div>';
+
+        html += '<div class="warden-section">';
+        html += '<div class="warden-form-row">';
+        html += '<label>当前TID:</label>';
+        html += '<span style="color:#492e1b;font-weight:bold;">' + (getCurrentTid() || '未检测到TID') + '</span>';
+        html += '</div>';
+
+        html += '<div style="margin:8px 0;">';
+        html += '<button class="warden-btn" id="warden-btn-fetch-reports">刷新举报数据</button>';
+        html += '</div>';
+
+        // 举报统计
+        html += '<div id="warden-report-stats" style="display:none;margin-bottom:8px;font-size:13px;">';
+        html += '共 <strong id="warden-report-count" style="color:#c0392b;">0</strong> 条举报';
+        html += '</div>';
+
+        // 举报列表
+        html += '<div id="warden-report-list" style="max-height:400px;overflow-y:auto;background:#fff;border:1px solid #d4c5a9;">';
+        html += '<div style="padding:20px;text-align:center;color:#8b6914;">点击"刷新举报数据"获取举报信息</div>';
+        html += '</div>';
+
+        html += '</div>';
+
+        return html;
+    }
+
+    // ===================================
+    // 查看本帖举报引擎
+    // ===================================
+    function fetchThreadReports(callback) {
+        var tid = getCurrentTid();
+        if (!tid) { alert('当前页面未检测到TID，请在帖子页面使用'); return; }
+
+        updateReportListUI('<div style="padding:20px;text-align:center;color:#8b6914;">正在获取举报数据...</div>');
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/nuke.php?__lib=noti&__act=get_all&raw=3', true);
+        xhr.timeout = 20000;
+        xhr.onload = function() {
+            if (xhr.status !== 200) {
+                updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">获取失败 (HTTP ' + xhr.status + ')</div>');
+                return;
+            }
+            try {
+                var data = JSON.parse(xhr.responseText);
+                if (data.error) {
+                    updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">API错误: ' + JSON.stringify(data.error) + '</div>');
+                    return;
+                }
+                if (callback) callback(data, tid);
+            } catch(e) {
+                updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">解析失败: ' + e.message + '</div>');
+            }
+        };
+        xhr.onerror = function() { updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">网络请求失败</div>'); };
+        xhr.ontimeout = function() { updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">请求超时</div>'); };
+        xhr.send();
+    }
+
+    function filterReportsByTid(data, targetTid) {
+        var reports = [];
+        if (!data.data) return reports;
+
+        var tidStr = String(targetTid);
+        for (var k in data.data) {
+            var section = data.data[k];
+            if (section && Array.isArray(section['1'])) {
+                for (var i = 0; i < section['1'].length; i++) {
+                    var r = section['1'][i];
+                    // r[6]=tid, r[0]=type(13=主题/14=回复), r[1]=uid, r[2]=nickname, r[5]=title, r[9]=timestamp, r[11]=reason
+                    if (String(r[6]) === tidStr) {
+                        reports.push(r);
+                    }
+                }
+            }
+        }
+        // 按时间倒序
+        reports.sort(function(a, b) { return b[9] - a[9]; });
+        return reports;
+    }
+
+    function formatReportTimestamp(ts) {
+        var d = new Date(ts * 1000);
+        var pad = function(n) { return (n < 10 ? '0' : '') + n; };
+        return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' +
+               pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+
+    function renderThreadReports(reports) {
+        var countEl = document.getElementById('warden-report-count');
+        var statsEl = document.getElementById('warden-report-stats');
+        if (countEl) countEl.textContent = reports.length;
+        if (statsEl) statsEl.style.display = reports.length > 0 ? 'block' : 'none';
+
+        var listEl = document.getElementById('warden-report-list');
+        if (!listEl) return;
+
+        if (reports.length === 0) {
+            listEl.innerHTML = '<div style="padding:20px;text-align:center;color:#8b6914;">暂无该帖子的举报记录</div>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < reports.length; i++) {
+            var r = reports[i];
+            var rType = r[0], rTid = r[6], rPid = r[7], rTitle = r[5] || '', rReason = r[11] || '', rTime = r[9], rNick = r[2] || '';
+            html += '<div style="padding:8px;border-bottom:1px solid #e8d8b8;font-size:12px;">';
+            html += '<span style="color:#1a5276;font-weight:bold;">' + (rType === 13 ? '[主题]' : '[回复]') + '</span> ';
+            html += '<span style="color:#6b4e2e;">' + escapeHtml(rNick) + '</span> ';
+            html += '<span style="color:#8b6914;">' + formatReportTimestamp(rTime) + '</span> ';
+            html += '<span style="color:#c0392b;">' + escapeHtml(rReason) + '</span> ';
+            html += '<a href="/read.php?tid=' + rTid + (rPid ? '&pid=' + rPid + '&to=1' : '') + '" target="_blank" style="color:#b56700;margin-left:4px;">查看</a>';
+            html += '</div>';
+        }
+        listEl.innerHTML = html;
+    }
+
+    function updateReportListUI(content) {
+        var listEl = document.getElementById('warden-report-list');
+        if (listEl) listEl.innerHTML = content;
+    }
+
+    // ===================================
     // UI: 创建打开按钮
     // ===================================
     function createOpenButton() {
@@ -2402,7 +2538,7 @@
             updatePageInfoUI();
             loadSettingsToForm();
         }
-        if (index === 3) {
+        if (index === 4) {
             var as = loadAppSettings();
             var removeLoginToggle = document.getElementById('warden-setting-remove-login');
             if (removeLoginToggle) removeLoginToggle.checked = as.removeLoginBtn;
@@ -2741,6 +2877,18 @@
                     applyShowPrivateNotes();
                 }
                 addScoreLogEntry('info', this.checked ? '已开启：显示非公开备注' : '已关闭：显示非公开备注，刷新页面后生效');
+            });
+        }
+
+        // ========== 查看本帖举报事件 ==========
+
+        var fetchReportsBtn = document.getElementById('warden-btn-fetch-reports');
+        if (fetchReportsBtn) {
+            fetchReportsBtn.addEventListener('click', function() {
+                fetchThreadReports(function(data, tid) {
+                    var reports = filterReportsByTid(data, tid);
+                    renderThreadReports(reports);
+                });
             });
         }
 
