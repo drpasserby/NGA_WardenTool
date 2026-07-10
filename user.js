@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.7
+// @version      1.2.8
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -2168,14 +2168,20 @@
     // ===================================
     // 查看本帖举报引擎
     // ===================================
-    function fetchThreadReports(callback) {
+    // 查看本帖举报引擎（使用 admin_log_search 接口）
+    var REPORT_PAGE = 1;
+
+    function fetchThreadReports(page) {
         var tid = getCurrentTid();
         if (!tid) { alert('当前页面未检测到TID，请在帖子页面使用'); return; }
 
-        updateReportListUI('<div style="padding:20px;text-align:center;color:#8b6914;">正在获取举报数据...</div>');
+        page = page || 1;
+        REPORT_PAGE = page;
+        updateReportListUI('<div style="padding:20px;text-align:center;color:#8b6914;">正在获取举报数据(第' + page + '页)...</div>');
 
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/nuke.php?__lib=noti&__act=get_all&raw=3', true);
+        xhr.open('POST', '/nuke.php?__lib=admin_log_search&__act=search&from=&to=&id=', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
         xhr.timeout = 20000;
         xhr.onload = function() {
             if (xhr.status !== 200) {
@@ -2183,40 +2189,59 @@
                 return;
             }
             try {
-                var data = JSON.parse(xhr.responseText);
+                // 解析 window.script_muti_get_var_store = {...};
+                // 去掉前缀（含赋值语句）和后缀（;</script>之后的内容）
+                // 去除前缀
+                var raw = xhr.responseText.replace(/^[\s\S]*?window\.script_muti_get_var_store\s*=\s*/, '');
+                // 使用括号计数找到JSON结束位置（处理嵌套对象）
+                var depth = 0, endIdx = -1;
+                for (var ci = 0; ci < raw.length; ci++) {
+                    if (raw[ci] === '{') depth++;
+                    else if (raw[ci] === '}') { depth--; if (depth === 0) { endIdx = ci; break; } }
+                }
+                if (endIdx === -1) {
+                    updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">响应解析失败：未找到JSON结束位置</div>');
+                    return;
+                }
+                var jsonStr = raw.substring(0, endIdx + 1);
+                var data = JSON.parse(jsonStr);
                 if (data.error) {
                     updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">API错误: ' + JSON.stringify(data.error) + '</div>');
                     return;
                 }
-                if (callback) callback(data, tid);
+                var reports = parseReportData(data);
+                renderThreadReports(reports, tid, page);
             } catch(e) {
                 updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">解析失败: ' + e.message + '</div>');
             }
         };
         xhr.onerror = function() { updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">网络请求失败</div>'); };
         xhr.ontimeout = function() { updateReportListUI('<div style="padding:20px;text-align:center;color:#c0392b;">请求超时</div>'); };
-        xhr.send();
+        xhr.send('type=3&about=' + tid + '&about2=&page=' + page + '&__output=3');
     }
 
-    function filterReportsByTid(data, targetTid) {
+    function parseReportData(data) {
         var reports = [];
         if (!data.data) return reports;
-
-        var tidStr = String(targetTid);
-        for (var k in data.data) {
-            var section = data.data[k];
-            if (section && Array.isArray(section['1'])) {
-                for (var i = 0; i < section['1'].length; i++) {
-                    var r = section['1'][i];
-                    // r[6]=tid, r[0]=type(13=主题/14=回复), r[1]=uid, r[2]=nickname, r[5]=title, r[9]=timestamp, r[11]=reason
-                    if (String(r[6]) === tidStr) {
-                        reports.push(r);
-                    }
-                }
+        // 数据在 data.0 下，是一个以数字为key的对象
+        var list = data.data['0'];
+        if (!list) return reports;
+        for (var k in list) {
+            if (list.hasOwnProperty(k)) {
+                var r = list[k];
+                // r[0]=举报ID, r[1]=类型, r[2]=举报人UID, r[3]=被举报人UID, r[4]=TID, r[5]=理由, r[6]=时间戳
+                reports.push({
+                    id: r[0],
+                    type: r[1],
+                    reporterUid: r[2],
+                    targetUid: r[3],
+                    tid: r[4],
+                    reason: r[5] || '',
+                    time: r[6]
+                });
             }
         }
-        // 按时间倒序
-        reports.sort(function(a, b) { return b[9] - a[9]; });
+        reports.sort(function(a, b) { return b.time - a.time; });
         return reports;
     }
 
@@ -2227,11 +2252,11 @@
                pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
     }
 
-    function renderThreadReports(reports) {
+    function renderThreadReports(reports, tid, page) {
         var countEl = document.getElementById('warden-report-count');
         var statsEl = document.getElementById('warden-report-stats');
         if (countEl) countEl.textContent = reports.length;
-        if (statsEl) statsEl.style.display = reports.length > 0 ? 'block' : 'none';
+        if (statsEl) statsEl.style.display = 'block';
 
         var listEl = document.getElementById('warden-report-list');
         if (!listEl) return;
@@ -2244,16 +2269,42 @@
         var html = '';
         for (var i = 0; i < reports.length; i++) {
             var r = reports[i];
-            var rType = r[0], rTid = r[6], rPid = r[7], rTitle = r[5] || '', rReason = r[11] || '', rTime = r[9], rNick = r[2] || '';
             html += '<div style="padding:8px;border-bottom:1px solid #e8d8b8;font-size:12px;">';
-            html += '<span style="color:#1a5276;font-weight:bold;">' + (rType === 13 ? '[主题]' : '[回复]') + '</span> ';
-            html += '<span style="color:#6b4e2e;">' + escapeHtml(rNick) + '</span> ';
-            html += '<span style="color:#8b6914;">' + formatReportTimestamp(rTime) + '</span> ';
-            html += '<span style="color:#c0392b;">' + escapeHtml(rReason) + '</span> ';
-            html += '<a href="/read.php?tid=' + rTid + (rPid ? '&pid=' + rPid + '&to=1' : '') + '" target="_blank" style="color:#b56700;margin-left:4px;">查看</a>';
+            html += '<span style="color:#8b6914;">#' + r.id + '</span> ';
+            html += '<span style="color:#1a5276;">举报人UID:</span><a href="nuke.php?func=ucp&uid=' + r.reporterUid + '" target="_blank" style="color:#b56700;">' + r.reporterUid + '</a> ';
+            html += '<span style="color:#6b4e2e;">被举报UID:</span><a href="nuke.php?func=ucp&uid=' + r.targetUid + '" target="_blank" style="color:#b56700;">' + r.targetUid + '</a> ';
+            html += '<span style="color:#8b6914;">' + formatReportTimestamp(r.time) + '</span>';
+            html += '<div style="color:#c0392b;margin-top:2px;">' + escapeHtml(r.reason) + '</div>';
+            html += '<a href="/nuke.php?func=report&tid=' + tid + '" target="_blank" style="color:#b56700;font-size:11px;">NGA举报管理页</a>';
             html += '</div>';
         }
+
+        // 分页
+        html += '<div style="padding:8px;text-align:center;font-size:12px;">';
+        if (page > 1) {
+            html += '<button class="warden-btn warden-report-prev" data-page="' + (page-1) + '" style="margin-right:4px;">上一页</button>';
+        }
+        html += '<span style="color:#6b4e2e;">第' + page + '页</span> ';
+        if (reports.length >= 20) {
+            html += '<button class="warden-btn warden-report-next" data-page="' + (page+1) + '" style="margin-left:4px;">下一页</button>';
+        }
+        html += '</div>';
+
         listEl.innerHTML = html;
+
+        // 绑定分页按钮事件
+        var prevBtns = listEl.querySelectorAll('.warden-report-prev');
+        for (var pi = 0; pi < prevBtns.length; pi++) {
+            prevBtns[pi].addEventListener('click', function() {
+                fetchThreadReports(parseInt(this.getAttribute('data-page')));
+            });
+        }
+        var nextBtns = listEl.querySelectorAll('.warden-report-next');
+        for (var ni = 0; ni < nextBtns.length; ni++) {
+            nextBtns[ni].addEventListener('click', function() {
+                fetchThreadReports(parseInt(this.getAttribute('data-page')));
+            });
+        }
     }
 
     function updateReportListUI(content) {
@@ -2885,10 +2936,7 @@
         var fetchReportsBtn = document.getElementById('warden-btn-fetch-reports');
         if (fetchReportsBtn) {
             fetchReportsBtn.addEventListener('click', function() {
-                fetchThreadReports(function(data, tid) {
-                    var reports = filterReportsByTid(data, tid);
-                    renderThreadReports(reports);
-                });
+                fetchThreadReports(1);
             });
         }
 
