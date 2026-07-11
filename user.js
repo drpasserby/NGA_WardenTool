@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.8
+// @version      1.2.9
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -2274,7 +2274,7 @@
             html += '<span style="color:#1a5276;">举报人UID:</span><a href="nuke.php?func=ucp&uid=' + r.reporterUid + '" target="_blank" style="color:#b56700;">' + r.reporterUid + '</a> ';
             html += '<span style="color:#6b4e2e;">被举报UID:</span><a href="nuke.php?func=ucp&uid=' + r.targetUid + '" target="_blank" style="color:#b56700;">' + r.targetUid + '</a> ';
             html += '<span style="color:#8b6914;">' + formatReportTimestamp(r.time) + '</span>';
-            html += '<div style="color:#c0392b;margin-top:2px;">' + escapeHtml(r.reason) + '</div>';
+            html += '<div style="color:#c0392b;margin-top:2px;">' + escapeHtml(decodeReportTag(r.reason)) + '</div>';
             html += '<a href="/nuke.php?func=report&tid=' + tid + '" target="_blank" style="color:#b56700;font-size:11px;">NGA举报管理页</a>';
             html += '</div>';
         }
@@ -2305,6 +2305,40 @@
                 fetchThreadReports(parseInt(this.getAttribute('data-page')));
             });
         }
+    }
+
+    // 解码举报标签 [TQ:3bNdq,Xb6aO] → [Tid:xxx,Pid:xxxx]
+    function decodeReportTag(reason) {
+        if (!reason) return reason;
+        return reason.replace(/\[TQ:([^\],]+)(?:,([^\]]+))?\]/g, function(match, tidCode, pidCode) {
+            var tid = tidCode ? base62ReverseCase(tidCode) : '';
+            var pid = pidCode ? base62ReverseCase(pidCode) : '';
+            if (tid && pid) return '[Tid:' + tid + ',Pid:' + pid + ']';
+            if (tid) return '[Tid:' + tid + ']';
+            return match;
+        });
+    }
+
+    // 大小写反转后 base62→decimal
+    function base62ReverseCase(code) {
+        var reversed = '';
+        for (var i = 0; i < code.length; i++) {
+            var ch = code.charAt(i);
+            if (ch >= 'a' && ch <= 'z') reversed += ch.toUpperCase();
+            else if (ch >= 'A' && ch <= 'Z') reversed += ch.toLowerCase();
+            else reversed += ch;
+        }
+        var result = 0;
+        for (var j = 0; j < reversed.length; j++) {
+            var c = reversed.charAt(j);
+            var val;
+            if (c >= '0' && c <= '9') val = c.charCodeAt(0) - 48;
+            else if (c >= 'A' && c <= 'Z') val = c.charCodeAt(0) - 65 + 10;
+            else if (c >= 'a' && c <= 'z') val = c.charCodeAt(0) - 97 + 36;
+            else val = 0;
+            result = result * 62 + val;
+        }
+        return result;
     }
 
     function updateReportListUI(content) {
