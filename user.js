@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.2.9
+// @version      1.3.0
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -2223,26 +2223,47 @@
     function parseReportData(data) {
         var reports = [];
         if (!data.data) return reports;
-        // 数据在 data.0 下，是一个以数字为key的对象
-        var list = data.data['0'];
-        if (!list) return reports;
-        for (var k in list) {
-            if (list.hasOwnProperty(k)) {
-                var r = list[k];
-                // r[0]=举报ID, r[1]=类型, r[2]=举报人UID, r[3]=被举报人UID, r[4]=TID, r[5]=理由, r[6]=时间戳
+        // 举报数据在 data.data.0（key为0,1,2...是各条举报）
+        var section = data.data['0'];
+        if (!section) return reports;
+        // 用户UID→昵称映射在 data.data.1
+        var userMap = data.data['1'] || {};
+        // 遍历举报列表（跳过非数字key如length等）
+        for (var k in section) {
+            if (section.hasOwnProperty(k) && /^\d+$/.test(k) && k.length < 3) {
+                var r = section[k];
+                var reporterUid = String(r[2] || '');
+                var targetUid = String(r[3] || '');
+                var reasonText = r[5] || '';
+                // 从理由中解码TID/PID
+                var tagInfo = extractTagInfo(reasonText);
                 reports.push({
                     id: r[0],
-                    type: r[1],
-                    reporterUid: r[2],
-                    targetUid: r[3],
-                    tid: r[4],
-                    reason: r[5] || '',
+                    reporterUid: reporterUid,
+                    reporterNick: userMap[reporterUid] || reporterUid,
+                    targetUid: targetUid,
+                    targetNick: userMap[targetUid] || targetUid,
+                    tid: r[4] || tagInfo.tid,
+                    pid: tagInfo.pid || '',
+                    reason: reasonText,
                     time: r[6]
                 });
             }
         }
         reports.sort(function(a, b) { return b.time - a.time; });
         return reports;
+    }
+
+    // 从理由中提取解码后的TID/PID
+    function extractTagInfo(reason) {
+        var info = { tid: '', pid: '' };
+        if (!reason) return info;
+        var match = reason.match(/\[TQ:([^\],]+)(?:,([^\]]+))?\]/);
+        if (match) {
+            if (match[1]) info.tid = base62ReverseCase(match[1]);
+            if (match[2]) info.pid = base62ReverseCase(match[2]);
+        }
+        return info;
     }
 
     function formatReportTimestamp(ts) {
@@ -2266,18 +2287,37 @@
             return;
         }
 
-        var html = '';
+        var html = '<div style="overflow-x:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="background:#e0cfa6;">';
+        html += '<th style="padding:6px 8px;border:1px solid #c4a87c;text-align:left;white-space:nowrap;">时间</th>';
+        html += '<th style="padding:6px 8px;border:1px solid #c4a87c;text-align:left;white-space:nowrap;">举报人</th>';
+        html += '<th style="padding:6px 8px;border:1px solid #c4a87c;text-align:left;white-space:nowrap;">PID</th>';
+        html += '<th style="padding:6px 8px;border:1px solid #c4a87c;text-align:left;white-space:nowrap;">被举报人</th>';
+        html += '<th style="padding:6px 8px;border:1px solid #c4a87c;text-align:left;">举报理由</th>';
+        html += '<th style="padding:6px 8px;border:1px solid #c4a87c;text-align:center;white-space:nowrap;">操作</th>';
+        html += '</tr></thead><tbody>';
+
         for (var i = 0; i < reports.length; i++) {
             var r = reports[i];
-            html += '<div style="padding:8px;border-bottom:1px solid #e8d8b8;font-size:12px;">';
-            html += '<span style="color:#8b6914;">#' + r.id + '</span> ';
-            html += '<span style="color:#1a5276;">举报人UID:</span><a href="nuke.php?func=ucp&uid=' + r.reporterUid + '" target="_blank" style="color:#b56700;">' + r.reporterUid + '</a> ';
-            html += '<span style="color:#6b4e2e;">被举报UID:</span><a href="nuke.php?func=ucp&uid=' + r.targetUid + '" target="_blank" style="color:#b56700;">' + r.targetUid + '</a> ';
-            html += '<span style="color:#8b6914;">' + formatReportTimestamp(r.time) + '</span>';
-            html += '<div style="color:#c0392b;margin-top:2px;">' + escapeHtml(decodeReportTag(r.reason)) + '</div>';
-            html += '<a href="/nuke.php?func=report&tid=' + tid + '" target="_blank" style="color:#b56700;font-size:11px;">NGA举报管理页</a>';
-            html += '</div>';
+            var pidLink = r.pid ? '<a href="https://bbs.nga.cn/read.php?tid=' + r.tid + '&pid=' + r.pid + '&to=1" target="_blank" style="color:#b56700;">' + r.pid + '</a>' : '-';
+            var reporterLink = '<a href="https://bbs.nga.cn/nuke.php?func=ucp&uid=' + r.reporterUid + '" target="_blank" style="color:#b56700;" title="UID:' + r.reporterUid + '">' + escapeHtml(r.reporterNick) + '</a>';
+            var targetLink = '<a href="https://bbs.nga.cn/nuke.php?func=ucp&uid=' + r.targetUid + '" target="_blank" style="color:#b56700;" title="UID:' + r.targetUid + '">' + escapeHtml(r.targetNick) + '</a>';
+            var bg = (i % 2 === 0) ? '#faf7f0' : '#fff';
+
+            html += '<tr style="background:' + bg + ';">';
+            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;white-space:nowrap;">' + formatReportTimestamp(r.time) + '</td>';
+            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + reporterLink + '</td>';
+            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + pidLink + '</td>';
+            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + targetLink + '</td>';
+            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + escapeHtml(decodeReportTag(r.reason)) + '</td>';
+            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;text-align:center;">';
+            html += '<a href="https://bbs.nga.cn/nuke.php?func=report&tid=' + tid + '" target="_blank" style="color:#b56700;font-size:11px;">管理</a>';
+            html += '</td>';
+            html += '</tr>';
         }
+
+        html += '</tbody></table></div>';
 
         // 分页
         html += '<div style="padding:8px;text-align:center;font-size:12px;">';
