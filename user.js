@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.0
+// @version      1.3.1
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -2312,7 +2312,9 @@
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + targetLink + '</td>';
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + escapeHtml(cleanReportReason(r.reason)) + '</td>';
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;text-align:center;">';
-            html += '<a href="https://bbs.nga.cn/nuke.php?func=report&tid=' + tid + '" target="_blank" style="color:#b56700;font-size:11px;">管理</a>';
+            if (r.pid && r.tid) {
+                html += '<button class="warden-btn danger warden-report-lockhide" data-tid="' + r.tid + '" data-pid="' + r.pid + '" style="padding:2px 8px;font-size:11px;">锁隐</button>';
+            }
             html += '</td>';
             html += '</tr>';
         }
@@ -2331,6 +2333,29 @@
         html += '</div>';
 
         listEl.innerHTML = html;
+
+        // 绑定锁隐按钮事件
+        var lockhideBtns = listEl.querySelectorAll('.warden-report-lockhide');
+        for (var lh = 0; lh < lockhideBtns.length; lh++) {
+            lockhideBtns[lh].addEventListener('click', function() {
+                var btnTid = this.getAttribute('data-tid');
+                var btnPid = this.getAttribute('data-pid');
+                if (!confirm('确定要锁隐 TID:' + btnTid + ' PID:' + btnPid + ' 吗？')) return;
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/nuke.php', true);
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                xhr.timeout = 15000;
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        try { var resp = JSON.parse(xhr.responseText); if (resp.error) alert('失败: ' + JSON.stringify(resp.error)); else alert('锁隐成功'); }
+                        catch(e) { alert('锁隐操作已完成'); }
+                    } else { alert('请求失败 HTTP ' + xhr.status); }
+                };
+                xhr.onerror = function() { alert('网络请求失败'); };
+                xhr.send('__lib=topic_lock&__act=set&ids=' + encodeURIComponent(btnTid + ',' + btnPid) +
+                         '&ton=0&toff=0&pon=1026&poff=0&pm=0&info=&raw=3');
+            });
+        }
 
         // 绑定分页按钮事件
         var prevBtns = listEl.querySelectorAll('.warden-report-prev');
