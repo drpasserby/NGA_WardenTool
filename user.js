@@ -2310,7 +2310,7 @@
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + reporterLink + '</td>';
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + pidLink + '</td>';
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + targetLink + '</td>';
-            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + escapeHtml(decodeReportTag(r.reason)) + '</td>';
+            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + escapeHtml(cleanReportReason(r.reason)) + '</td>';
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;text-align:center;">';
             html += '<a href="https://bbs.nga.cn/nuke.php?func=report&tid=' + tid + '" target="_blank" style="color:#b56700;font-size:11px;">管理</a>';
             html += '</td>';
@@ -2379,6 +2379,15 @@
             result = result * 62 + val;
         }
         return result;
+    }
+
+    // 清理举报理由：去除 [Tid:xxx,Pid:xxx] 前缀和 [TID:xxx] 后缀
+    function cleanReportReason(reason) {
+        if (!reason) return '';
+        var text = decodeReportTag(reason);
+        text = text.replace(/^\[Tid:\d+(?:,Pid:\d+)?\]\s*/, '');
+        text = text.replace(/\s*\[TID:\d+\]$/, '');
+        return text.trim();
     }
 
     function updateReportListUI(content) {
