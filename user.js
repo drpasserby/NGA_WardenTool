@@ -38,7 +38,7 @@
     var styleEl = document.createElement('style');
     styleEl.textContent = [
         // ---- 遮罩与面板容器 ----
-        '#nga-warden-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:99999;justify-content:center;align-items:flex-start;padding-top:40px}',
+        '#nga-warden-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:3;justify-content:center;align-items:flex-start;padding-top:40px}',
         '#nga-warden-overlay.show{display:flex}',
         '#nga-warden-panel{width:960px;max-width:98vw;max-height:85vh;background:#fdf5e6;border:2px solid #ba8b5a;border-radius:3px;display:flex;flex-direction:column;box-shadow:0 0 20px rgba(0,0,0,0.4);font-family:"Microsoft YaHei","PingFang SC","Helvetica Neue",Arial,sans-serif;font-size:13px;color:#492e1b}',
 
