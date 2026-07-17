@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.1
+// @version      1.3.2
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -2311,7 +2311,9 @@
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + pidLink + '</td>';
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + targetLink + '</td>';
             html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;">' + escapeHtml(cleanReportReason(r.reason)) + '</td>';
-            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;text-align:center;">';
+            html += '<td style="padding:5px 8px;border:1px solid #d4c5a9;text-align:center;white-space:nowrap;">';
+            var previewPid = r.pid || '0';
+            html += '<button class="warden-btn" onclick="commonui.cancelBubble(event);commonui.cancelEvent(event);ubbcode.fastViewPost(event,' + r.tid + ',' + previewPid + ',0,this)" style="padding:2px 8px;font-size:11px;">预览</button> ';
             if (r.pid && r.tid) {
                 html += '<button class="warden-btn danger warden-report-lockhide" data-tid="' + r.tid + '" data-pid="' + r.pid + '" style="padding:2px 8px;font-size:11px;">锁隐</button>';
             }
