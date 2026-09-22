@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.3
+// @version      1.3.4
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -3095,9 +3095,12 @@
             + '  .posterInfoLine=' + count('.posterInfoLine')
             + '  .postbtnsc=' + count('.postbtnsc'));
         add('-- 注入结果 --');
-        add('已注入入口=' + count('.nga-wd-tree-btn')
-            + '  含样式表=' + !!document.getElementById('nga-wd-tree-css')
-            + '  模块已挂=' + !!window.__NGA_WARDEN_MODULES);
+        add('菜单入口已注册=' + (function () {
+            try {
+                var pb = window.commonui && window.commonui.postBtn;
+                return !!(pb && pb.d && pb.d[91]);
+            } catch (e) { return -1; }
+        })() + '  面板已挂=' + !!window.__NGA_WARDEN_MODULES);
         var rows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
         var withPid = 0;
         for (var i = 0; i < rows.length; i++) {
@@ -3111,20 +3114,16 @@
                 add('-- 模块内部状态 --');
                 add('installed=' + moduleState.installed
                     + '  observing=' + moduleState.observing
-                    + '  polling=' + moduleState.polling
+                    + '  entryRetry=' + moduleState.entryRetry
                     + '  treeButtons=' + moduleState.treeButtons);
-                add('模块看到的行数=' + moduleState.rows
-                    + '（能定位 pid 的 ' + moduleState.rowsWithPid + '）'
-                    + '  模块自己数到的已注入=' + moduleState.injected);
-                if (moduleState.firstRow) {
-                    add('首层: id=' + moduleState.firstRow.id
-                        + ' floor=' + moduleState.firstRow.floor
-                        + ' pid=' + moduleState.firstRow.pid
-                        + ' uid=' + moduleState.firstRow.authorUid
-                        + ' 有挂载点=' + moduleState.firstRow.host);
-                } else {
-                    add('首层: readRow 没解析出楼层');
-                }
+                add('postBtn=' + moduleState.postBtn
+                    + '  菜单项[锁隐回复树]=' + moduleState.menuTree
+                    + '  [锁隐作者树]=' + moduleState.menuAuthor
+                    + '  已进"更多→管理"=' + moduleState.inAdminMenu
+                    + '  悬停条已接管=' + moduleState.hoverWrapped);
+                add('楼层参数数=' + moduleState.args
+                    + '  本页有管理权限=' + moduleState.surfaceAllowed
+                    + '  旧版自建入口残留=' + moduleState.legacyEntries);
             } catch (e) {
                 add('模块自检异常：' + (e && e.message ? e.message : e));
             }
@@ -3137,19 +3136,21 @@
             + '  页数上限=' + settings.treeMaxPages
             + '  NUKE默认值=' + settings.nukeDefaultsOn);
         add('结论：' + (function () {
-            if (rows.length === 0) {
-                return '没找到楼层容器 —— 本页不是帖子页，或楼层结构不同，请把整段自检结果发回';
+            if (!moduleState) return '模块未挂载 —— 请把整段自检结果发回';
+            if (moduleState.installed !== true) {
+                return '模块没被安装（installed=false）—— 请把整段自检结果发回';
             }
-            if (withPid === 0) {
-                return '找到楼层但定位不到 pid，说明 pid 元素结构不同 —— 请把整段自检结果发回';
+            if (moduleState.postBtn !== true) {
+                return 'commonui.postBtn 尚未就绪，入口注册不上 —— 请把整段自检结果发回';
             }
-            if (count('.nga-wd-tree-btn') > 0) {
-                return '一切正常，入口已注入；若屏幕上仍看不到，说明被其它脚本/样式遮挡';
+            if (moduleState.surfaceAllowed !== true) {
+                return '本页没检测到管理权限，官方按钮系统不会渲染入口 —— 属正常（确认你在这个版面有版主权限）';
             }
-            if (moduleState && moduleState.observing === false) {
-                return '楼层正常但模块没装上监视器（observing=false）—— 请把整段自检结果发回';
+            if (moduleState.menuTree !== true) {
+                return '入口未注册（菜单项=0）—— 等 1~2 秒再点一次页面自检；仍为 0 请把整段结果发回';
             }
-            return '楼层正常但尚未注入（页面可能仍在异步渲染，等 1~2 秒再点一次页面自检）';
+            return '一切正常：「锁隐回复树 / 锁隐作者树」应已出现在楼层悬停条的"管理"按钮组、'
+                + '以及"更多 → 管理"菜单里；主楼只显示"锁隐回复树"（在那里锁整帖）';
         })());
         return out.join('\n');
     }
@@ -3705,6 +3706,7 @@
             var observer = null;
             var debounceTimer = null;
             var poller = null;
+            var entryRetryTimer = null;
             var menuEl = null;
             var menuAnchor = null;
 
@@ -3756,84 +3758,305 @@
                 return { row: row, floor: floor, pid: pid, authorUid: authorUid };
             }
 
-            // Where to attach the entry. NGA differs between desktop/mobile and
-            // between page versions, so try several hosts instead of only .postInfo.
-            // Returns null when nothing usable exists yet (caller retries later).
-            function findActionHost(row, info) {
-                if (!row) return null;
-                var candidates = [
-                    '.postInfo',
-                    '.posterInfoLine .right',
-                    '.posterInfoLine',
-                    '.postbtnsc',
-                    'a.postbtmb'
-                ];
-                for (var i = 0; i < candidates.length; i++) {
-                    var hit = row.querySelector(candidates[i]);
-                    if (hit) {
-                        if (candidates[i] === 'a.postbtmb') return hit.parentNode || hit;
-                        return hit;
+            // ============================================================
+            // Entry points are registered in NGA's OWN button system
+            // (commonui.postBtn.d + genB-created controls), exactly the way NGA Warden
+            // Utils does it. That is what makes them appear as native-looking buttons
+            // in the hover bar next to 引用/编辑/更多, and again under 更多 -> 管理.
+            // Injecting our own <a> into the floor markup (the previous approach) did
+            // not survive NGA re-rendering and never looked native.
+            // ============================================================
+            var BTN_TREE = 91;
+            var BTN_AUTHOR = 92;
+            var BTN_LESSER = 14;
+            var LABEL_TREE = '\u9501\u9690\u56DE\u590D\u6811';
+            var LABEL_AUTHOR = '\u9501\u9690\u4F5C\u8005\u6811';
+            var LABEL_TREE_N3 = '.\u9501\u9690.\u56DE\u590D\u6811';
+            var LABEL_AUTHOR_N3 = '.\u9501\u9690.\u4F5C\u8005\u6811';
+            var MAX_GENB_WRAPS = 20;
+            var entryWraps = 0;
+
+            function postBtnOf() {
+                var w = pageWindow();
+                return (w.commonui && w.commonui.postBtn) || null;
+            }
+
+            function adminList(pb) {
+                return (pb && pb.all && pb.all['\u7BA1\u7406']) || null;
+            }
+
+            function settings_() {
+                return loadSettings() || {};
+            }
+
+            // \u7BA1\u7406\u6743\u9650\uff1a\u4f18\u5148\u7528\u5b98\u65b9\u6309\u94ae\u7684 ck()\uff0c
+            // \u56DE\u9000\u5230\u5bbf\u4e3b\u63d0\u4f9b\u7684 hasWardenPermission()\u3002
+            function argAllowed(id, arg) {
+                var pb = postBtnOf();
+                var spec = pb && pb.d && pb.d[id];
+                if (spec && typeof spec.ck === 'function' && arg) {
+                    try { return !!spec.ck(arg); } catch (err) { /* fall through */ }
+                }
+                return false;
+            }
+
+            function surfaceAllowed(arg) {
+                if (argAllowed(BTN_LESSER, arg)) return true;
+                if (typeof hasWardenPermission === 'function') {
+                    try { return !!hasWardenPermission(arg); } catch (err) { return false; }
+                }
+                return false;
+            }
+
+            function isTopicArg(a) {
+                if (!a || !a.tid || (a.pid | 0) > 0) return false;
+                var floor = (a.i != null) ? (a.i | 0) : (a.lou | 0);
+                return floor === 0;
+            }
+
+            function argAuthorId(a) {
+                if (!a) return 0;
+                var direct = (a.pAid | 0) || (a.authorid | 0) || (a.uid | 0);
+                if (direct > 0) return direct;
+                var pid = a.pid | 0;
+                var R = pageWindow().__R;
+                if (pid && R) {
+                    var vals = Object.values(R);
+                    for (var i = 0; i < vals.length; i++) {
+                        if (vals[i] && Number(vals[i].pid) === pid) {
+                            return Number(vals[i].authorid) || 0;
+                        }
                     }
                 }
-                // fall back to the author line / the row itself so the entry is at
-                // least reachable; a slightly odd position beats an invisible entry
-                var author = row.querySelector('.userlink.author, [id^="postauthor"]');
-                if (author && author.parentNode) return author.parentNode;
-                return row;
+                return 0;
             }
 
-            function entryLabel(info) {
-                return (info && info.floor === 0) ? '\u9501\u9690\u6574\u5e16' : '\u9501\u9690\u6811';
-            }
-
-            function injectEntry(row) {
-                if (!row || row.nodeType !== 1) return;
-                if (row.querySelector('.nga-wd-tree-btn')) return;
-                var info = readRow(row);
-                if (!info.pid) return;
-                var bar = findActionHost(row, info) || row;
-                var btn = document.createElement('a');
-                btn.href = 'javascript:void(0)';
-                btn.className = 'nga-wd-tree-btn';
-                btn.id = 'nga-wd-tree-btn-' + info.pid;
-                btn.setAttribute('data-nga-wd', 'tree-btn');
-                btn.setAttribute('data-nga-wd-floor', String(info.floor));
-                btn.textContent = entryLabel(info);
-                btn.title = (info.floor === 0)
-                    ? '\u9501\u9690\u6574\u4e2a\u4e3b\u9898\uff08\u70b9\u5f00\u9009\u62e9\uff09'
-                    : '\u9501\u9690\u8fd9\u4e00\u697c\u53ca\u5f15\u7528\u5b83\u7684\u697c\u5c42';
-                btn.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (menuEl && menuAnchor === btn) {
-                        closeMenu();
-                        return;
+            function argsFromPage() {
+                var w = pageWindow();
+                var data = w.commonui && w.commonui.postArg && w.commonui.postArg.data;
+                var out = [];
+                if (data) {
+                    var vals = Object.values(data);
+                    for (var i = 0; i < vals.length; i++) {
+                        if (vals[i] && vals[i].tid) out.push(vals[i]);
                     }
-                    openMenu(btn, info);
-                });
-                bar.appendChild(btn);
+                }
+                return out;
+            }
+
+            function surfaceUsable(arg) {
+                if (!arg || !arg.tid) return false;
+                var s = settings_();
+                if (isTopicArg(arg)) return s.lockHideReplyTree !== false;
+                if ((arg.pid | 0) > 0) return s.lockHideReplyTree !== false;
+                return false;
+            }
+
+            function markBtn(btn, kind) {
+                if (!btn) return btn;
+                btn.setAttribute('data-nga-wd-entry', kind);
+                return btn;
+            }
+
+            function btnFromEvent(e) {
+                var t = e && e.target;
+                if (!t) return null;
+                return t.closest ? t.closest('a') : t;
+            }
+
+            // Register / refresh the two official menu entries.
+            function registerMenuEntries() {
+                var pb = postBtnOf();
+                if (!pb || !pb.d || typeof pb.d !== 'object') return false;
+                var s = settings_();
+                var allow = surfaceAllowed(null) || argsFromPage().some(surfaceAllowed);
+                var on = !!s.treeButtons;
+
+                if (on && allow) {
+                    pb.d[BTN_TREE] = {
+                        n1: LABEL_TREE,
+                        n2: '\u56DE\u590D\uff1a\u9501\u9690\u6B64\u697C\u53CA\u5F15\u7528/\u56DE\u590D\u5B83\u7684\u697C\u3002'
+                            + '\u4E3B\u9898\uff1a\u9501\u9690\u6574\u5E16\u3002',
+                        n3: LABEL_TREE_N3,
+                        init: function (btn) { markBtn(btn, 'tree'); },
+                        ck: function (a) {
+                            return !!(surfaceUsable(a) && surfaceAllowed(a));
+                        },
+                        on: function (e, a) {
+                            if (!a || !a.tid) return;
+                            var btn = btnFromEvent(e);
+                            if (isTopicArg(a)) runTopicLock(a.tid, btn);
+                            else runReplyTree(a.tid, a.pid | 0, btn);
+                        }
+                    };
+                    if (s.lockHideAuthor !== false) {
+                        pb.d[BTN_AUTHOR] = {
+                            n1: LABEL_AUTHOR,
+                            n2: '\u9501\u9690\u8BE5\u4F5C\u8005\u5728\u672C\u5E16\u7684\u53D1\u8A00\u53CA'
+                                + '\u5F15\u7528\u8FD9\u4E9B\u53D1\u8A00\u7684\u56DE\u590D\u3002',
+                            n3: LABEL_AUTHOR_N3,
+                            init: function (btn) { markBtn(btn, 'author'); },
+                            ck: function (a) {
+                                return !!(surfaceUsable(a) && surfaceAllowed(a) && argAuthorId(a) > 0);
+                            },
+                            on: function (e, a) {
+                                if (!a || !a.tid) return;
+                                runAuthorTree(a.tid, a.pid | 0, argAuthorId(a), btnFromEvent(e));
+                            }
+                        };
+                    } else {
+                        delete pb.d[BTN_AUTHOR];
+                    }
+                } else {
+                    delete pb.d[BTN_TREE];
+                    delete pb.d[BTN_AUTHOR];
+                }
+
+                var admin = adminList(pb);
+                if (admin) {
+                    [BTN_TREE, BTN_AUTHOR].forEach(function (id) {
+                        var at = admin.indexOf(id);
+                        if (at >= 0) admin.splice(at, 1);
+                    });
+                    if (on && allow) {
+                        if (s.lockHideAuthor !== false) admin.unshift(BTN_AUTHOR);
+                        admin.unshift(BTN_TREE);
+                    }
+                }
+                return !!(on && allow);
+            }
+
+            // \u65e7\u7248\u81ea\u5efa\u5165\u53e3\u7684\u6807\u8BB0\uff1a\u5347\u7EA7\u540e\u628a\u5B83\u6E05\u6389\u3002
+            function removeLegacyEntries() {
+                var btns = document.querySelectorAll('.nga-wd-tree-btn');
+                for (var i = 0; i < btns.length; i++) {
+                    var b = btns[i];
+                    if (b.parentNode) b.parentNode.removeChild(b);
+                }
+            }
+
+            // Wrap genB so the two buttons land in the hover bar beside 更多.
+            // Faithful to NGA Warden Utils: siblings of the 更多 cell, never children
+            // of the table (that shows up outside tbody as a stray first button).
+            function wrapHoverBar() {
+                var pb = postBtnOf();
+                if (!pb || typeof pb.genB !== 'function') return false;
+                if (pb.genB._ngaWdBtns || entryWraps >= MAX_GENB_WRAPS) return true;
+                var orig = pb.genB.bind(pb);
+                pb.genB = function (argid, opt) {
+                    var bar = orig(argid, opt);
+                    if (!bar || !bar.querySelectorAll) return bar;
+                    var arg = this.argCache ? this.argCache[argid] : null;
+                    if (!settings_().treeButtons || !surfaceAllowed(arg)) return bar;
+
+                    var links = bar.querySelectorAll('a');
+                    var more = null;
+                    for (var i = 0; i < links.length; i++) {
+                        if ((links[i].textContent || '').replace(/\s+/g, '') === '\u66F4\u591A') {
+                            more = links[i];
+                        }
+                    }
+                    var moreTd = more && more.closest ? more.closest('td') : null;
+
+                    function place(btn) {
+                        if (!btn) return;
+                        var row = (moreTd && moreTd.parentNode)
+                            || bar.querySelector('tbody tr') || bar.querySelector('tr');
+                        if (row) {
+                            var td = document.createElement('td');
+                            td.appendChild(btn);
+                            if (moreTd) row.insertBefore(td, moreTd);
+                            else row.appendChild(td);
+                            return;
+                        }
+                        if (more && more.parentNode) more.parentNode.insertBefore(btn, more);
+                        else bar.appendChild(btn);
+                    }
+                    function findBtn(label) {
+                        var found = bar.querySelectorAll('a');
+                        for (var i = 0; i < found.length; i++) {
+                            var t = (found[i].textContent || '').replace(/\s+/g, '');
+                            if (t === label.replace(/\s+/g, '')) return found[i];
+                        }
+                        return null;
+                    }
+                    function put(id, label) {
+                        var btn = findBtn(label);
+                        if (!btn && typeof pb.genA === 'function' && pb.argCache) {
+                            btn = pb.genA(pb.argCache[argid], id, 1);
+                        }
+                        if (!btn) return;
+                        markBtn(btn, id === BTN_AUTHOR ? 'author' : 'tree');
+                        place(btn);
+                    }
+
+                    var s = settings_();
+                    put(BTN_TREE, LABEL_TREE);
+                    if (s.lockHideAuthor !== false && !isTopicArg(arg)) put(BTN_AUTHOR, LABEL_AUTHOR);
+                    return bar;
+                };
+                pb.genB._ngaWdBtns = true;
+                entryWraps++;
+                return true;
+            }
+
+            // NGA shows a hover bar per floor; drop any cached ones so a repaired bar
+            // shows on the next hover.
+            function wipeHoverBars() {
+                var w = pageWindow();
+                var data = w.commonui && w.commonui.postArg && w.commonui.postArg.data;
+                if (!data) return;
+                var vals = Object.values(data);
+                for (var i = 0; i < vals.length; i++) {
+                    var host = vals[i] && vals[i].pC;
+                    if (host && host._postBtn) {
+                        host._postBtn.remove();
+                        host._postBtn = null;
+                    }
+                }
+                if (w.commonui && w.commonui.postBtn) w.commonui.postBtn.currentBtn = null;
             }
 
             function refreshLabels() {
-                var btns = document.querySelectorAll('.nga-wd-tree-btn');
-                for (var i = 0; i < btns.length; i++) {
-                    var t = btns[i].textContent || '';
-                    if (t === '\u9501\u9690\u4E2D' || t === '\u68C0\u7D22\u4E2D' || t === '\u64A4\u9500\u4E2D') {
-                        var fl = Number(btns[i].getAttribute('data-nga-wd-floor'));
-                        btns[i].textContent = (fl === 0) ? '\u9501\u9690\u6574\u5e16' : '\u9501\u9690\u6811';
-                    }
-                }
+                /* labels are owned by NGA's own renderer now */
             }
 
             function reparse() {
                 if (!getCurrentTid()) return;
                 var settings = loadSettings();
-                if (!settings.treeButtons) return;
-                refreshLabels();
-                var rows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
-                for (var i = 0; i < rows.length; i++) {
-                    injectEntry(rows[i]);
+                if (!settings.treeButtons) {
+                    registerMenuEntries();
+                    return;
                 }
+                removeLegacyEntries();
+                var ok = registerMenuEntries();
+                if (ok) {
+                    wrapHoverBar();
+                    wipeHoverBars();
+                }
+            }
+
+            // NGA builds postBtn in stages; keep trying until our ids are registered.
+            function startEntryRetry() {
+                if (entryRetryTimer) return;
+                var tries = 0;
+                entryRetryTimer = setInterval(function () {
+                    tries++;
+                    if (!loadSettings().treeButtons || tries > 240) {
+                        clearInterval(entryRetryTimer);
+                        entryRetryTimer = null;
+                        return;
+                    }
+                    var pb = postBtnOf();
+                    var ready = pb && pb.d && typeof pb.d === 'object';
+                    if (ready) {
+                        reparse();
+                        if (pb.d[BTN_TREE]) {
+                            clearInterval(entryRetryTimer);
+                            entryRetryTimer = null;
+                        }
+                    }
+                }, 250);
             }
 
             function scheduleReparse() {
@@ -3901,28 +4124,23 @@
             function startFeature() {
                 if (!installed) return;
                 var settings = loadSettings();
-                if (!settings.treeButtons) return;
                 observeDocument();
-                reparse();
-                // Self-heal: if the page keeps changing without our observer firing
-                // (detached subtree swaps, re-renders), poll slowly until we managed
-                // to inject at least one entry.
-                if (!poller) {
-                    var tries = 0;
-                    poller = setInterval(function () {
-                        tries++;
-                        if (!loadSettings().treeButtons) { stopPolling(); return; }
-                        if (document.querySelector('.nga-wd-tree-btn')) { stopPolling(); return; }
-                        reparse();
-                        if (tries > 20) stopPolling();
-                    }, 500);
+                if (!settings.treeButtons) {
+                    registerMenuEntries();
+                    return;
                 }
+                reparse();
+                startEntryRetry();
             }
 
             function stopPolling() {
                 if (poller) {
                     clearInterval(poller);
                     poller = null;
+                }
+                if (entryRetryTimer) {
+                    clearInterval(entryRetryTimer);
+                    entryRetryTimer = null;
                 }
             }
 
@@ -3937,11 +4155,21 @@
                     observer = null;
                 }
                 closeMenu();
-                var btns = document.querySelectorAll('.nga-wd-tree-btn');
-                for (var i = 0; i < btns.length; i++) {
-                    var b = btns[i];
-                    if (b.parentNode) b.parentNode.removeChild(b);
+                removeLegacyEntries();
+                // unregister our entries so NGA stops rendering them
+                var pb = postBtnOf();
+                if (pb && pb.d) {
+                    delete pb.d[BTN_TREE];
+                    delete pb.d[BTN_AUTHOR];
                 }
+                var admin = adminList(pb);
+                if (admin) {
+                    [BTN_TREE, BTN_AUTHOR].forEach(function (id) {
+                        var at = admin.indexOf(id);
+                        if (at >= 0) admin.splice(at, 1);
+                    });
+                }
+                wipeHoverBars();
             }
 
             function onSettingsChanged(key) {
@@ -4706,6 +4934,15 @@
                 return chain;
             }
 
+            // Restore a button's own caption after a run (each button has a fixed label).
+            function restoreBtn(btn) {
+                if (!btn) return;
+                var kind = btn.getAttribute('data-nga-wd-entry');
+                var id = btn.getAttribute('data-nga-wd-id');
+                if (kind === 'author' || id === '92') btn.textContent = LABEL_AUTHOR;
+                else btn.textContent = LABEL_TREE;
+            }
+
             function logLockOutcome(okList, fails) {
                 addTreeLogEntry('success', '\u5DF2\u9501\u9690 ' + okList.length + ' \u4E2A\u56DE\u590D');
                 if (fails.length) {
@@ -4743,7 +4980,7 @@
                     notify(String((e && e.message) || e), true);
                 }).then(function() {
                     running = false;
-                    if (btn) btn.textContent = '\u9501\u9690\u6811';
+                    restoreBtn(btn);
                 });
             }
 
@@ -4784,7 +5021,7 @@
                     notify(String((e && e.message) || e), true);
                 }).then(function() {
                     running = false;
-                    if (btn) btn.textContent = '\u9501\u9690\u6811';
+                    restoreBtn(btn);
                 });
             }
 
@@ -4825,7 +5062,7 @@
                     notify(String((e && e.message) || e), true);
                 }).then(function() {
                     running = false;
-                    if (btn) btn.textContent = '\u9501\u9690\u6811';
+                    restoreBtn(btn);
                 });
             }
 
@@ -5018,38 +5255,38 @@
                 });
             }
 
-            // Runtime diagnostics for the host's "\u9875\u9762\u81ea\u68c0" button. Returns a
-            // plain object so a failure can be attributed to a specific step.
+            // \u8fd0\u884c\u65f6\u8bca\u65ad\uff1a\u4f9b\u5bbf\u4e3b\u7684"\u9875\u9762\u81ea\u68c0"\u6309\u94ae\u4f7f\u7528\u3002
             function inspect() {
                 var out = {
                     installed: installed,
                     observing: !!observer,
-                    polling: !!poller,
+                    entryRetry: !!entryRetryTimer,
                     tid: 0,
-                    rows: 0,
-                    rowsWithPid: 0,
-                    injected: 0,
-                    firstRow: null,
+                    postBtn: false,
+                    menuTree: false,
+                    menuAuthor: false,
+                    inAdminMenu: false,
+                    hoverWrapped: false,
+                    surfaceAllowed: false,
+                    args: 0,
+                    legacyEntries: 0,
                     treeButtons: false
                 };
                 try { out.tid = Number(getCurrentTid()) || 0; } catch (err) { out.tid = -1; }
-                try { out.treeButtons = !!loadSettings().treeButtons; } catch (err) { out.treeButtons = null; }
-                var rows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
-                out.rows = rows.length;
-                for (var i = 0; i < rows.length; i++) {
-                    if (rows[i].querySelector('[id^="pid"]')) out.rowsWithPid++;
+                try { out.treeButtons = !!settings_().treeButtons; } catch (err) { out.treeButtons = null; }
+                var pb = postBtnOf();
+                out.postBtn = !!(pb && pb.d);
+                if (pb && pb.d) {
+                    out.menuTree = !!pb.d[BTN_TREE];
+                    out.menuAuthor = !!pb.d[BTN_AUTHOR];
+                    var admin = adminList(pb);
+                    out.inAdminMenu = !!(admin && admin.indexOf(BTN_TREE) >= 0);
+                    out.hoverWrapped = !!(pb.genB && pb.genB._ngaWdBtns);
                 }
-                if (rows.length) {
-                    var info = readRow(rows[0]);
-                    out.firstRow = {
-                        id: rows[0].id,
-                        floor: info.floor,
-                        pid: info.pid,
-                        authorUid: info.authorUid,
-                        host: !!findActionHost(rows[0], info)
-                    };
-                }
-                out.injected = document.querySelectorAll('.nga-wd-tree-btn').length;
+                var args = argsFromPage();
+                out.args = args.length;
+                out.surfaceAllowed = args.some(surfaceAllowed);
+                out.legacyEntries = document.querySelectorAll('.nga-wd-tree-btn').length;
                 return out;
             }
 
