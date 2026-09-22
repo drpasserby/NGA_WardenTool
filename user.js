@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.2
-// @description  NGA玩家社区网页版版主管理增强工具，包含批量加分等功能模块
+// @version      1.3.3
+// @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
 // @match        *://g.nga.cn/*
@@ -31,6 +31,12 @@
     }
 
     log('脚本已加载');
+
+    // ===================================
+    // 模块占位声明（实现在本次 IIFE 末尾赋值）
+    // ===================================
+    var TREE_FEATURE = null;      // 锁隐回复树 / 锁隐作者树
+    var NUKE_DEFAULTS = null;     // 次级 NUKE 默认值
 
     // ===================================
     // 注入 CSS (NGA配色风格)
@@ -128,13 +134,65 @@
             '#nga-warden-header{padding:10px 14px}',
             '#nga-warden-header span{font-size:16px}',
             '#nga-warden-close{font-size:22px;padding:4px}',
-            '#nga-warden-tabs .tab-btn{padding:10px 14px;font-size:14px}',
+            // 6 个页签在窄屏放不下：横向滚动（iOS 支持惯性滚动），不换行、不被裁掉
+            '#nga-warden-tabs{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}',
+            '#nga-warden-tabs::-webkit-scrollbar{display:none}',
+            '#nga-warden-tabs .tab-btn{padding:10px 14px;font-size:14px;flex:0 0 auto;white-space:nowrap}',
             '#nga-warden-body{padding:8px}',
             '.warden-form-row{flex-direction:column;align-items:stretch}',
             '.warden-form-row label{min-width:auto;text-align:left}',
             '.warden-form-row .warden-input{min-width:auto}',
             '.warden-btn{padding:8px 18px;font-size:13px}',
-        '}'
+            // 触屏：开关加大，避免 40x22 的小控件点不中
+            '.warden-form-row .kw-toggle{width:46px;height:26px}',
+            '.warden-form-row .kw-slider:before{height:20px;width:20px}',
+            '.warden-form-row .kw-toggle input:checked+.kw-slider:before{transform:translateX(20px)}',
+            '#nga-warden-tree-log{max-height:40vh}',
+        '}',
+
+        // ---- 锁隐树日志区域 ----
+        '#nga-warden-tree-log{background:#fff;border:1px solid #d4c5a9;padding:8px;margin-top:8px;max-height:220px;overflow-y:auto;font-size:12px;font-family:Consolas,monospace;white-space:pre-wrap}',
+        '#nga-warden-tree-log .log-line{padding:2px 4px;border-bottom:1px solid #f0f0f0}',
+        '#nga-warden-tree-log .log-line.success{color:#1e8449}',
+        '#nga-warden-tree-log .log-line.error{color:#c0392b}',
+        '#nga-warden-tree-log .log-line.info{color:#1a5276}',
+
+        // ---- 楼层上的"锁隐树"入口按钮 ----
+        // NGA 有不少针对楼层内 <a> 的全局规则（配色/字号/换行/溢出），这里用 !important
+        // 全部顶掉，否则按钮可能"存在但看不见"。触屏下额外放大点击区域。
+        'a.nga-wd-tree-btn{display:inline-block!important;visibility:visible!important;opacity:1!important;',
+        'margin:0 0 0 .5em!important;padding:2px 7px!important;cursor:pointer!important;',
+        'color:#8b2178!important;background:rgba(139,33,120,.09)!important;',
+        'border:1px solid rgba(139,33,120,.38)!important;border-radius:3px!important;',
+        'font:700 12px/1.5 "Microsoft YaHei",sans-serif!important;',
+        'text-decoration:none!important;white-space:nowrap!important;vertical-align:middle!important;',
+        'position:static!important;float:none!important;max-width:none!important;min-width:0!important;',
+        'width:auto!important;height:auto!important;line-height:1.5!important;letter-spacing:normal!important;',
+        'text-indent:0!important;overflow:visible!important;text-transform:none!important}',
+        'a.nga-wd-tree-btn:hover{background:rgba(139,33,120,.18)!important;color:#6d1a5e!important}',
+        'a.nga-wd-tree-btn.nga-wd-busy{opacity:.55!important;cursor:default!important}',
+        '@media (hover:none),(pointer:coarse){a.nga-wd-tree-btn{padding:6px 10px!important;font-size:14px!important}}',
+
+        // ---- 锁隐树菜单 ----
+        '#nga-wd-tree-menu{position:absolute;z-index:2147483646;min-width:11em;max-width:min(86vw,17em);',
+        'background:#fffdf6;border:2px solid #8a5a22;border-radius:4px;',
+        'box-shadow:0 6px 20px rgba(40,24,8,.32);font:14px/1.5 "Microsoft YaHei",sans-serif;',
+        'color:#551200;padding:4px 0}',
+        '#nga-wd-tree-menu .nga-wd-tree-menu-title{padding:6px 12px;font-weight:700;color:#8b2178;',
+        'border-bottom:1px solid #e0c89a}',
+        '#nga-wd-tree-menu .nga-wd-tree-menu-item{display:block;width:100%;box-sizing:border-box;',
+        'padding:10px 12px;border:0;background:transparent;color:#551200;font:inherit;text-align:left;cursor:pointer}',
+        '#nga-wd-tree-menu .nga-wd-tree-menu-item:hover{background:#f7edf4;color:#8b2178}',
+        '#nga-wd-tree-menu .nga-wd-tree-menu-item:disabled{color:#aa9999;cursor:default;background:transparent}',
+        '#nga-wd-tree-menu .nga-wd-tree-menu-hint{padding:8px 12px;color:#8b6914;font-size:12px}',
+
+        // ---- 锁隐结果浮窗 ----
+        '#nga-wd-toast{position:fixed;z-index:2147483647;right:16px;top:16px;max-width:26em;padding:10px 12px;border-radius:6px;font:13px/1.45 "Microsoft YaHei",sans-serif;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.35)}',
+        '#nga-wd-toast .nga-wd-toast-body{white-space:pre-wrap}',
+        '#nga-wd-toast .nga-wd-toast-bar{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;justify-content:flex-end}',
+        '#nga-wd-toast button{margin:0;padding:4px 10px;border:1px solid rgba(255,255,255,.45);border-radius:4px;background:transparent;color:#fff;font:13px/1.2 sans-serif;cursor:pointer}',
+        '#nga-wd-toast button:disabled{opacity:.55;cursor:default}',
+        '@keyframes nga-wd-toast-shrink{from{transform:scaleX(1)}to{transform:scaleX(0)}}'
     ].join('\n');
     document.head.appendChild(styleEl);
 
@@ -300,7 +358,24 @@
         enableHideAll: false,    // 一键锁隐作者按钮
         removeWatermark: false,  // 删除NGA水印
         showVotes: false,        // 查看赞踩比
-        showPrivateNotes: false  // 显示非公开备注
+        showPrivateNotes: false, // 显示非公开备注
+
+        // ---- 锁隐回复树 / 锁隐作者树 / 次级NUKE默认值 ----
+        treeButtons: true,             // 在楼层操作栏注入"锁隐树"入口
+        lockHideReplyTree: true,       // 允许使用"锁隐回复树"
+        lockHideAuthor: true,          // 允许使用"锁隐作者树"
+        treeMaxPages: 10,              // 单次向后/向前检索页数上限(1-10)
+        treeSkipLocked: true,          // 跳过已经是锁隐状态的楼层
+        nukeDefaultsOn: true,          // 次级NUKE默认值总开关
+        lesserNukeScope: '大区内',      // 范围默认值
+        lesserNukeDays: '禁言4天',      // 禁言默认值
+        lesserNukeReputation: '不扣减', // 声望默认值
+        lesserDeductPrestige: false,   // 同时扣减威望
+        lesserDelay: false,            // 延时(禁言延时生效)
+        lesserNukeNote: '',            // 默认操作说明(主题)
+        lesserNukeNoteLong: '',        // 默认操作说明(短信)
+        lesserClearNoteOnOfficialReason: true, // 选官方处罚理由时清除预填说明
+        lesserNukeDeletePost: true     // 勾选"删除此贴"
     };
 
     function loadAppSettings() {
@@ -324,6 +399,53 @@
         try {
             localStorage.setItem(KEY_APP_SETTINGS, JSON.stringify(settings));
         } catch (e) {}
+    }
+
+    // 保存单个设置项（读改写，避免覆盖其它模块刚改过的值）
+    function setAppSetting(key, value) {
+        var settings = loadAppSettings();
+        settings[key] = value;
+        saveAppSettings(settings);
+        return settings;
+    }
+
+    // ===================================
+    // 锁隐树 / 次级NUKE 公共：页面权限判断
+    // ===================================
+    // 页面上下文：@grant none 时 window 就是页面 window
+    function pageWindow() {
+        return window;
+    }
+
+    // 当前帖子页是否具备管理权限（与官方按钮 ck() 同源）
+    function hasWardenPermission(arg) {
+        var w = pageWindow();
+        var pb = w.commonui && w.commonui.postBtn;
+        function officialAllows(id, a) {
+            var spec = pb && pb.d && pb.d[id];
+            if (!spec || typeof spec.ck !== 'function' || !a) return false;
+            try { return !!spec.ck(a); } catch (e) { return false; }
+        }
+        if (arg) return officialAllows(41, arg) || officialAllows(14, arg);
+        var gp = w.__GP;
+        if (gp && gp.admincheck != null && (Number(gp.admincheck) & (2 | 8))) return true;
+        var data = (w.commonui && w.commonui.postArg && w.commonui.postArg.data) || null;
+        if (!data) return false;
+        for (var key in data) {
+            if (!data.hasOwnProperty(key)) continue;
+            if (officialAllows(41, data[key]) || officialAllows(14, data[key])) return true;
+        }
+        return false;
+    }
+
+    // 当前是否次级NUKE（Lesser Nuke）可用
+    function officialLesserAllowed(arg) {
+        var w = pageWindow();
+        var pb = w.commonui && w.commonui.postBtn;
+        var spec = pb && pb.d && pb.d[14];
+        if (!spec || typeof spec.ck !== 'function') return false;
+        if (!arg) return true;
+        try { return !!spec.ck(arg); } catch (e) { return false; }
     }
 
     function applyRemoveLoginBtn(enabled) {
@@ -1427,7 +1549,8 @@
                     '<div class="tab-btn" data-tab="1">贴内批量操作</div>' +
                     '<div class="tab-btn" data-tab="2">用户回复操作</div>' +
                     '<div class="tab-btn" data-tab="3">查看本帖举报</div>' +
-                    '<div class="tab-btn" data-tab="4">设置</div>' +
+                    '<div class="tab-btn" data-tab="4">锁隐树</div>' +
+                    '<div class="tab-btn" data-tab="5">设置</div>' +
                 '</div>' +
                 '<div id="nga-warden-body">' +
                     // ---- 页面0: 批量加分 ----
@@ -1446,8 +1569,8 @@
                     '<div class="warden-page" data-page="3">' +
                         createThreadReportPageHTML() +
                     '</div>' +
-                    // ---- 页面4: 设置 ----
-                    '<div class="warden-page" data-page="4">' +
+                    // ---- 页面5: 设置 ----
+                    '<div class="warden-page" data-page="5">' +
                         '<div class="warden-section">' +
                             '<h3>设置</h3>' +
                             '<div class="warden-form-row">' +
@@ -1492,10 +1615,165 @@
                             '</div>' +
                         '</div>' +
                         '<div class="warden-section">' +
+                            '<h3>次级NUKE默认值</h3>' +
+                            '<p style="font-size:12px;color:#8b6914;">打开官方「次级NUKE」弹窗时自动预填下列默认值，不会发送任何额外请求。手动改过弹窗选项后，本次弹窗不再回填。</p>' +
+                            '<div class="warden-form-row">' +
+                                '<label>启用默认值:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-nuke-setting="nukeDefaultsOn">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">关闭后不再预填任何选项</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>默认范围:</label>' +
+                                '<select class="warden-input warden-input-short" data-nuke-setting="lesserNukeScope">' +
+                                    '<option value="全论坛">全论坛</option>' +
+                                    '<option value="本版面">本版面</option>' +
+                                    '<option value="本合集">本合集</option>' +
+                                    '<option value="本区内">本区内</option>' +
+                                    '<option value="大区内">大区内</option>' +
+                                '</select>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>默认禁言:</label>' +
+                                '<select class="warden-input warden-input-short" data-nuke-setting="lesserNukeDays">' +
+                                    '<option value="禁言2天">禁言2天</option>' +
+                                    '<option value="禁言4天">禁言4天</option>' +
+                                    '<option value="禁言6天">禁言6天</option>' +
+                                    '<option value="禁言30天">禁言30天</option>' +
+                                '</select>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>默认声望:</label>' +
+                                '<select class="warden-input warden-input-short" data-nuke-setting="lesserNukeReputation">' +
+                                    '<option value="不扣减">不扣减</option>' +
+                                    '<option value="扣减声望">扣减声望</option>' +
+                                    '<option value="加倍扣减">加倍扣减</option>' +
+                                '</select>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>同时扣减威望:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-nuke-setting="lesserDeductPrestige">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">官方弹窗没有该项时自动跳过</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>延时:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-nuke-setting="lesserDelay">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">勾选官方弹窗中的"延时"</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>删除此贴:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-nuke-setting="lesserNukeDeletePost">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">"立刻锁隐并延迟删除"未在本工具内实现</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>默认操作说明(主题):</label>' +
+                                '<input type="text" class="warden-input" data-nuke-setting="lesserNukeNote" placeholder="留空则不填">' +
+                                '<span style="font-size:11px;color:#8b6914;">仅在官方说明框为空时填入</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>默认操作说明(短信):</label>' +
+                                '<input type="text" class="warden-input" data-nuke-setting="lesserNukeNoteLong" placeholder="留空则不填">' +
+                                '<span style="font-size:11px;color:#8b6914;">仅在官方短信说明框为空时填入</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>选官方理由时清空说明:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-nuke-setting="lesserClearNoteOnOfficialReason">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">勾选次级NUKE官方可选处罚理由后，清空预填的主题操作说明</span>' +
+                            '</div>' +
+                            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">' +
+                                '<button class="warden-btn" id="warden-btn-nuke-apply" title="把上面的默认值立刻回填到当前已打开的次级NUKE弹窗">立即应用到已打开的弹窗</button>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="warden-section">' +
                             '<h3>关于</h3>' +
                             '<div class="settings-row"><span class="settings-label">NGA版主管理增强工具</span></div>' +
                             '<div class="settings-row"><span class="settings-label">源代码Github仓库：</span><span class="settings-value"><a href="https://github.com/drpasserby/NGA_WardenTool" target="_blank">NGA_WardenTool</a></span></div>'+
-                            '<div class="settings-row"><span class="settings-label">开发者：</span><span class="settings-value"><a href="https://bbs.nga.cn/nuke.php?func=ucp&uid=62716817" target="_blank">UST</a>/<a href="http://wulvxinchen.cn/" target="_blank">WLXC</a></span></div>'
+                            '<div class="settings-row"><span class="settings-label">开发者：</span><span class="settings-value"><a href="https://bbs.nga.cn/nuke.php?func=ucp&uid=62716817" target="_blank">UST</a>/<a href="http://wulvxinchen.cn/" target="_blank">WLXC</a></span></div>' +
+                        '</div>' +
+                    '</div>' +
+                    // ---- 页面4: 锁隐树 ----
+                    '<div class="warden-page" data-page="4">' +
+                        '<div class="warden-section">' +
+                            '<h3>版权与致谢</h3>' +
+                            '<p>本页功能（锁隐回复树 / 锁隐作者树 / 锁隐本页）移植自 <b>NGA Warden Utils</b>，原脚本作者：'
+                                + '<a href="https://greasyfork.org/users/73441-watereast" target="_blank" rel="noopener">WaterEast</a>。</p>' +
+                            '<p>感谢鸭的代码。</p>' +
+                            '<p style="color:#c0392b;">本页仅为<b>优化使用</b>而做的精简移植；'
+                                + '想要更完整的体验请直接使用源脚本 NGA Warden Utils。</p>' +
+                        '</div>' +
+                        '<div class="warden-section">' +
+                            '<h3>锁隐回复树 / 锁隐作者树</h3>' +
+                            '<p>在帖子页（<b>read.php</b>）的楼层操作栏会出现 <b>锁隐树</b> 入口，点击后可选择：</p>' +
+                            '<p>· <b>锁隐回复树</b>：锁隐该楼，以及引用/回复了该楼的后续楼层（递归展开引用链）。</p>' +
+                            '<p>· <b>锁隐作者树</b>：锁隐该作者在本帖的发言，以及引用这些发言的楼层。只扫当前的"前一页～后一页"窗口，窗口没盖住首/末页时可在结果浮窗里点"整帖扫描"。</p>' +
+                            '<p style="color:#c0392b;" id="warden-tree-perm-hint">需要版主/管理权限：检测中…</p>' +
+                        '</div>' +
+                        '<div class="warden-section">' +
+                            '<h3>功能开关</h3>' +
+                            '<div class="warden-form-row">' +
+                                '<label>楼层显示锁隐树入口:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-tree-setting="treeButtons">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">关闭后不再往楼层操作栏注入按钮（已注入的刷新页面后消失）</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>启用锁隐回复树:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-tree-setting="lockHideReplyTree">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">入口菜单中的"锁隐回复树"是否可用</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>启用锁隐作者树:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-tree-setting="lockHideAuthor">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">入口菜单中的"锁隐作者树"是否可用（主楼不显示此项）</span>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="warden-section">' +
+                            '<h3>高级设置</h3>' +
+                            '<div class="warden-form-row">' +
+                                '<label>检索页数上限:</label>' +
+                                '<input type="number" class="warden-input warden-input-short" data-tree-setting="treeMaxPages" value="10" min="1" max="10" step="1" title="锁隐回复树单次向后页数，同时也是锁隐作者树单次向前/向后页数">' +
+                                '<span style="font-size:11px;color:#8b6914;">1~10，超过 10 按 10 处理</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>跳过已锁隐楼层:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-tree-setting="treeSkipLocked">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">已经锁隐/删除的楼层不再重复发送请求</span>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="warden-section">' +
+                            '<h3>操作日志</h3>' +
+                            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+                                '<button class="warden-btn" id="warden-btn-tree-selfcheck" title="检测当前页面能否注入锁隐树入口，结果写入下面的日志">页面自检</button>' +
+                                '<button class="warden-btn" id="warden-btn-tree-log-clear" title="清空日志显示">清除日志</button>' +
+                            '</div>' +
+                            '<div id="nga-warden-tree-log">' +
+                                '<div class="log-line info">就绪，等待操作...</div>' +
+                            '</div>' +
                         '</div>' +
                     '</div>' +
                 '</div>' +
@@ -2686,20 +2964,31 @@
         if (overlay) { overlay.classList.remove('show'); }
     }
 
+    // 页签顺序与页面 DOM 顺序解耦：索引 = 页签在标签栏里的位置，值 = data-page 编号。
+    // 这样要调整页签先后（例如把"锁隐树"放到"设置"前面）不需要搬动大段 HTML。
+    var TAB_PAGE = [0, 1, 2, 3, 4, 5];
+
     function switchTab(index) {
         var tabBtns = document.querySelectorAll('#nga-warden-tabs .tab-btn');
         var pages = document.querySelectorAll('#nga-warden-body .warden-page');
+        var want = TAB_PAGE[index];
         for (var i = 0; i < tabBtns.length; i++) {
             tabBtns[i].classList.toggle('active', i === index);
         }
         for (var j = 0; j < pages.length; j++) {
-            pages[j].classList.toggle('active', j === index);
+            var page = Number(pages[j].getAttribute('data-page'));
+            if (isNaN(page)) page = j;
+            pages[j].classList.toggle('active', page === want);
         }
         if (index === 0) {
             updatePageInfoUI();
             loadSettingsToForm();
         }
         if (index === 4) {
+            loadTreeSettingsToForm();
+            updateTreePermHint();
+        }
+        if (index === 5) {
             var as = loadAppSettings();
             var removeLoginToggle = document.getElementById('warden-setting-remove-login');
             if (removeLoginToggle) removeLoginToggle.checked = as.removeLoginBtn;
@@ -2711,6 +3000,171 @@
             if (votesToggle) votesToggle.checked = as.showVotes;
             var notesToggle = document.getElementById('warden-setting-notes');
             if (notesToggle) notesToggle.checked = as.showPrivateNotes;
+            loadNukeSettingsToForm();
+        }
+    }
+
+    // ===================================
+    // UI: 锁隐树设置同步
+    // ===================================
+    function loadTreeSettingsToForm() {
+        var as = loadAppSettings();
+        var nodes = document.querySelectorAll('[data-tree-setting]');
+        for (var i = 0; i < nodes.length; i++) {
+            var key = nodes[i].getAttribute('data-tree-setting');
+            if (!as.hasOwnProperty(key)) continue;
+            if (nodes[i].type === 'checkbox') nodes[i].checked = as[key] === true;
+            else nodes[i].value = as[key];
+        }
+    }
+
+    function updateTreePermHint() {
+        var hint = document.getElementById('warden-tree-perm-hint');
+        if (!hint) return;
+        if (!getCurrentTid()) {
+            hint.textContent = '当前不在帖子页（read.php），请进入帖子后再使用锁隐树。';
+            hint.style.color = '#8b6914';
+            return;
+        }
+        if (!hasWardenPermission(null)) {
+            hint.textContent = '当前账号/版面没有检测到管理权限，楼层上不会出现锁隐树入口。请确认已登录且在本版有版主权限。';
+            hint.style.color = '#c0392b';
+            return;
+        }
+        hint.textContent = '已检测到管理权限，楼层操作栏会出现"锁隐树"入口。';
+        hint.style.color = '#1e8449';
+    }
+
+    function addTreeLogEntry(type, message) {
+        var logEl = document.getElementById('nga-warden-tree-log');
+        if (!logEl) return;
+        var line = document.createElement('div');
+        line.className = 'log-line ' + type;
+        var now = new Date();
+        var hh = ('0' + now.getHours()).slice(-2);
+        var mm = ('0' + now.getMinutes()).slice(-2);
+        var ss = ('0' + now.getSeconds()).slice(-2);
+        line.textContent = '[' + hh + ':' + mm + ':' + ss + '] ' + message;
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+        while (logEl.children.length > 300) logEl.removeChild(logEl.firstChild);
+    }
+
+    function clearTreeLog() {
+        var logEl = document.getElementById('nga-warden-tree-log');
+        if (logEl) logEl.innerHTML = '';
+    }
+
+    // ===================================
+    // 锁隐树：页面自检（真机排障用）
+    // 面板「锁隐树」页点"页面自检"，把检测结果写进日志区，便于截图反馈。
+    // ===================================
+    function treeSelfCheck() {
+        var out = [];
+        function add(s) { out.push(s); addTreeLogEntry('info', s); }
+        function count(sel) {
+            try { return document.querySelectorAll(sel).length; } catch (e) { return -1; }
+        }
+        var tid = getCurrentTid();
+        add('=== 锁隐树自检 ===');
+        add('URL: ' + location.pathname + location.search);
+        add('tid=' + tid + '  fid=' + getCurrentFid() + '  page=' + getCurrentPage());
+        add('触屏(hover:none): ' + !!(window.matchMedia && window.matchMedia('(hover: none)').matches)
+            + '  视口=' + window.innerWidth + 'x' + window.innerHeight);
+        add('-- 数据 --');
+        add('__T: ' + (window.__T ? ('tid=' + window.__T.tid + ' replies=' + window.__T.replies) : '无')
+            + '   __R条数=' + (window.__R ? Object.keys(window.__R).length : 0)
+            + '   __CURRENT_UID=' + window.__CURRENT_UID);
+        var gp = window.__GP;
+        add('__GP: ' + (gp ? ('admincheck=' + gp.admincheck
+            + ' admin=' + !!gp.admin + ' super=' + !!gp.super
+            + ' superlesser=' + !!gp.superlesser) : '无'));
+        add('commonui.postBtn: ' + !!(window.commonui && window.commonui.postBtn)
+            + '  d[41]=' + !!(window.commonui && window.commonui.postBtn
+                && window.commonui.postBtn.d && window.commonui.postBtn.d[41])
+            + '  d[14]=' + !!(window.commonui && window.commonui.postBtn
+                && window.commonui.postBtn.d && window.commonui.postBtn.d[14]));
+        add('-- 权限 --');
+        add('hasWardenPermission(任一楼层)=' + hasWardenPermission(null)
+            + '  officialLesserAllowed=' + officialLesserAllowed(null));
+        add('-- DOM 关键选择器 --');
+        add('[id^="postrow"]=' + count('[id^="postrow"]')
+            + '  [id^="post1strow"]=' + count('[id^="post1strow"]')
+            + '  .postInfo=' + count('.postInfo')
+            + '  [id^="pid"]=' + count('[id^="pid"]')
+            + '  .posterInfoLine=' + count('.posterInfoLine')
+            + '  .postbtnsc=' + count('.postbtnsc'));
+        add('-- 注入结果 --');
+        add('已注入入口=' + count('.nga-wd-tree-btn')
+            + '  含样式表=' + !!document.getElementById('nga-wd-tree-css')
+            + '  模块已挂=' + !!window.__NGA_WARDEN_MODULES);
+        var rows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
+        var withPid = 0;
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].querySelector('[id^="pid"]')) withPid++;
+        }
+        add('楼层容器=' + rows.length + '，其中能定位 pid 的=' + withPid);
+        var moduleState = null;
+        if (TREE_FEATURE && typeof TREE_FEATURE.inspect === 'function') {
+            try {
+                moduleState = TREE_FEATURE.inspect();
+                add('-- 模块内部状态 --');
+                add('installed=' + moduleState.installed
+                    + '  observing=' + moduleState.observing
+                    + '  polling=' + moduleState.polling
+                    + '  treeButtons=' + moduleState.treeButtons);
+                add('模块看到的行数=' + moduleState.rows
+                    + '（能定位 pid 的 ' + moduleState.rowsWithPid + '）'
+                    + '  模块自己数到的已注入=' + moduleState.injected);
+                if (moduleState.firstRow) {
+                    add('首层: id=' + moduleState.firstRow.id
+                        + ' floor=' + moduleState.firstRow.floor
+                        + ' pid=' + moduleState.firstRow.pid
+                        + ' uid=' + moduleState.firstRow.authorUid
+                        + ' 有挂载点=' + moduleState.firstRow.host);
+                } else {
+                    add('首层: readRow 没解析出楼层');
+                }
+            } catch (e) {
+                add('模块自检异常：' + (e && e.message ? e.message : e));
+            }
+        }
+        var settings = loadAppSettings();
+        add('-- 开关 --');
+        add('楼层显示入口=' + settings.treeButtons
+            + '  回复树=' + settings.lockHideReplyTree
+            + '  作者树=' + settings.lockHideAuthor
+            + '  页数上限=' + settings.treeMaxPages
+            + '  NUKE默认值=' + settings.nukeDefaultsOn);
+        add('结论：' + (function () {
+            if (rows.length === 0) {
+                return '没找到楼层容器 —— 本页不是帖子页，或楼层结构不同，请把整段自检结果发回';
+            }
+            if (withPid === 0) {
+                return '找到楼层但定位不到 pid，说明 pid 元素结构不同 —— 请把整段自检结果发回';
+            }
+            if (count('.nga-wd-tree-btn') > 0) {
+                return '一切正常，入口已注入；若屏幕上仍看不到，说明被其它脚本/样式遮挡';
+            }
+            if (moduleState && moduleState.observing === false) {
+                return '楼层正常但模块没装上监视器（observing=false）—— 请把整段自检结果发回';
+            }
+            return '楼层正常但尚未注入（页面可能仍在异步渲染，等 1~2 秒再点一次页面自检）';
+        })());
+        return out.join('\n');
+    }
+
+    // ===================================
+    // UI: 次级NUKE默认值设置同步
+    // ===================================
+    function loadNukeSettingsToForm() {
+        var as = loadAppSettings();
+        var nodes = document.querySelectorAll('[data-nuke-setting]');
+        for (var i = 0; i < nodes.length; i++) {
+            var key = nodes[i].getAttribute('data-nuke-setting');
+            if (!as.hasOwnProperty(key)) continue;
+            if (nodes[i].type === 'checkbox') nodes[i].checked = as[key] === true;
+            else nodes[i].value = as[key];
         }
     }
 
@@ -3041,6 +3495,85 @@
             });
         }
 
+        // ========== 锁隐树设置事件 ==========
+        var treeNodes = document.querySelectorAll('[data-tree-setting]');
+        for (var ti = 0; ti < treeNodes.length; ti++) {
+            (function(el) {
+                var key = el.getAttribute('data-tree-setting');
+                el.addEventListener('change', function() {
+                    var value = el.type === 'checkbox' ? el.checked : el.value;
+                    if (key === 'treeMaxPages') {
+                        var n = parseInt(value, 10);
+                        if (!isFinite(n) || n < 1) n = 1;
+                        if (n > 10) n = 10;
+                        value = n;
+                        el.value = n;
+                    }
+                    setAppSetting(key, value);
+                    if (TREE_FEATURE && typeof TREE_FEATURE.onSettingsChanged === 'function') {
+                        TREE_FEATURE.onSettingsChanged(key);
+                    }
+                    addTreeLogEntry('info', '设置已保存：' + key + ' = ' + value);
+                });
+            })(treeNodes[ti]);
+        }
+        loadTreeSettingsToForm();
+
+        // ========== 次级NUKE默认值设置事件 ==========
+        var nukeNodes = document.querySelectorAll('[data-nuke-setting]');
+        for (var ni = 0; ni < nukeNodes.length; ni++) {
+            (function(el) {
+                var key = el.getAttribute('data-nuke-setting');
+                el.addEventListener('change', function() {
+                    var value = el.type === 'checkbox' ? el.checked : el.value;
+                    setAppSetting(key, value);
+                    addTreeLogEntry('info', '次级NUKE默认值已保存：' + key + ' = ' + value);
+                    // 官方弹窗正开着时立即生效
+                    if (NUKE_DEFAULTS && typeof NUKE_DEFAULTS.applyNow === 'function') {
+                        try { NUKE_DEFAULTS.applyNow(); } catch (e) { logError('应用次级NUKE默认值失败', e); }
+                    }
+                });
+            })(nukeNodes[ni]);
+        }
+        loadNukeSettingsToForm();
+
+        var nukeApplyBtn = document.getElementById('warden-btn-nuke-apply');
+        if (nukeApplyBtn) {
+            nukeApplyBtn.addEventListener('click', function() {
+                if (!NUKE_DEFAULTS || typeof NUKE_DEFAULTS.applyNow !== 'function') {
+                    alert('次级NUKE默认值模块未就绪。');
+                    return;
+                }
+                try {
+                    NUKE_DEFAULTS.applyNow();
+                    addTreeLogEntry('info', '已尝试把默认值应用到当前次级NUKE弹窗');
+                } catch (e) {
+                    logError('应用次级NUKE默认值失败', e);
+                    alert('应用失败：' + (e && e.message ? e.message : e));
+                }
+            });
+        }
+
+        var treeLogClearBtn = document.getElementById('warden-btn-tree-log-clear');
+        if (treeLogClearBtn) {
+            treeLogClearBtn.addEventListener('click', function() {
+                clearTreeLog();
+                addTreeLogEntry('info', '日志已清除');
+            });
+        }
+
+        var treeSelfCheckBtn = document.getElementById('warden-btn-tree-selfcheck');
+        if (treeSelfCheckBtn) {
+            treeSelfCheckBtn.addEventListener('click', function() {
+                try {
+                    treeSelfCheck();
+                } catch (e) {
+                    logError('页面自检异常', e);
+                    addTreeLogEntry('error', '自检异常：' + (e && e.message ? e.message : e));
+                }
+            });
+        }
+
         // ========== 查看本帖举报事件 ==========
 
         var fetchReportsBtn = document.getElementById('warden-btn-fetch-reports');
@@ -3080,6 +3613,19 @@
             if (appSettings.showVotes) applyShowVotes();
             if (appSettings.showPrivateNotes) applyShowPrivateNotes();
 
+            // 锁隐回复树 / 锁隐作者树 / 次级NUKE默认值
+            try {
+                if (TREE_FEATURE && typeof TREE_FEATURE.install === 'function') {
+                    TREE_FEATURE.install();
+                }
+                if (NUKE_DEFAULTS && typeof NUKE_DEFAULTS.install === 'function') {
+                    NUKE_DEFAULTS.install();
+                }
+            } catch (e) {
+                logError('锁隐树/NUKE默认值 初始化异常', e);
+            }
+            updateTreePermHint();
+
             var btnWrap = createOpenButton();
             btnWrap.addEventListener('click', showPanel);
 
@@ -3111,11 +3657,2028 @@
         }
     }
 
+    // ---- 模块构造必须在 init() 之前完成 ----
+    // Tampermonkey 在 document-start 注入时 readyState='loading'，init 会等到
+    // DOMContentLoaded，那时模块已就绪；但某些管理器的注入时机是 interactive/
+    // complete，init() 会在本文件解析过程中被同步调用 —— 如果模块构造写在后面，
+    // 那一刻 TREE_FEATURE 还是 null，install() 就被静默跳过（面板照建，功能全废）。
+    // 函数声明会被提升，所以这里可以安全地调用下面才定义的构造函数。
+    try {
+        TREE_FEATURE = typeof buildTreeFeature === 'function' ? buildTreeFeature() : null;
+    } catch (e) {
+        TREE_FEATURE = null;
+        logError('锁隐树模块初始化失败', e);
+    }
+    try {
+        NUKE_DEFAULTS = typeof buildNukeDefaults === 'function' ? buildNukeDefaults() : null;
+    } catch (e) {
+        NUKE_DEFAULTS = null;
+        logError('次级NUKE默认值模块初始化失败', e);
+    }
+    // 便于调试/自动化校验时获取模块引用（不参与页面逻辑）
+    try {
+        window.__NGA_WARDEN_MODULES = {
+            tree: TREE_FEATURE,
+            nukeDefaults: NUKE_DEFAULTS,
+            loadSettings: loadAppSettings,
+            saveSettings: saveAppSettings,
+            setSetting: setAppSetting,
+            selfCheck: treeSelfCheck
+        };
+    } catch (e) { /* 页面可能禁止写 window */ }
+
     // 等待页面准备就绪
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
+
+    // ---- spliced module: tree-feature.js ----
+        function buildTreeFeature() {
+            var PER_PAGE = 20;
+            var TOAST_MS = 3000;
+            var PON = 1026;
+            var running = false;
+            var lastOp = null;
+            var installed = false;
+            var observer = null;
+            var debounceTimer = null;
+            var poller = null;
+            var menuEl = null;
+            var menuAnchor = null;
+
+            function loadSettings() {
+                return loadAppSettings();
+            }
+
+            function maxPages() {
+                var s = loadSettings();
+                var n = Number(s.treeMaxPages);
+                var v = Number.isFinite(n) && n > 0 ? n : 10;
+                return Math.min(10, Math.max(1, v));
+            }
+
+            function skipLocked() {
+                var s = loadSettings();
+                return !!s.treeSkipLocked;
+            }
+
+            // All visual styling lives in the host stylesheet (user.js injects
+            // #nga-warden-* CSS, including a.nga-wd-tree-btn / #nga-wd-tree-menu /
+            // #nga-wd-toast). Keeping a second copy here caused conflicting rules
+            // (10px label, 2px borders) and made the entry hard to see/tap.
+            function ensureStyle() {
+                /* intentionally empty: styles are owned by the host */
+            }
+
+            function readRow(row) {
+                var floor = 0;
+                var m = row.id && row.id.match(/\d+$/);
+                if (m) floor = parseInt(m[0], 10) || 0;
+                var pid = 0;
+                var pidEl = row.querySelector('[id^="pid"]');
+                if (pidEl) {
+                    var pm = pidEl.id.match(/^pid(\d+)/);
+                    if (pm) pid = parseInt(pm[1], 10) || 0;
+                }
+                var authorUid = 0;
+                var authorEl = row.querySelector('.userlink.author, [id^="postauthor"]');
+                if (authorEl) {
+                    var uidAttr = authorEl.getAttribute('data-nga-wd-hover-uid');
+                    if (uidAttr) authorUid = parseInt(uidAttr, 10) || 0;
+                    if (!authorUid) {
+                        var href = authorEl.getAttribute('href') || '';
+                        var hm = href.match(/uid=(\d+)/);
+                        if (hm) authorUid = parseInt(hm[1], 10) || 0;
+                    }
+                }
+                return { row: row, floor: floor, pid: pid, authorUid: authorUid };
+            }
+
+            // Where to attach the entry. NGA differs between desktop/mobile and
+            // between page versions, so try several hosts instead of only .postInfo.
+            // Returns null when nothing usable exists yet (caller retries later).
+            function findActionHost(row, info) {
+                if (!row) return null;
+                var candidates = [
+                    '.postInfo',
+                    '.posterInfoLine .right',
+                    '.posterInfoLine',
+                    '.postbtnsc',
+                    'a.postbtmb'
+                ];
+                for (var i = 0; i < candidates.length; i++) {
+                    var hit = row.querySelector(candidates[i]);
+                    if (hit) {
+                        if (candidates[i] === 'a.postbtmb') return hit.parentNode || hit;
+                        return hit;
+                    }
+                }
+                // fall back to the author line / the row itself so the entry is at
+                // least reachable; a slightly odd position beats an invisible entry
+                var author = row.querySelector('.userlink.author, [id^="postauthor"]');
+                if (author && author.parentNode) return author.parentNode;
+                return row;
+            }
+
+            function entryLabel(info) {
+                return (info && info.floor === 0) ? '\u9501\u9690\u6574\u5e16' : '\u9501\u9690\u6811';
+            }
+
+            function injectEntry(row) {
+                if (!row || row.nodeType !== 1) return;
+                if (row.querySelector('.nga-wd-tree-btn')) return;
+                var info = readRow(row);
+                if (!info.pid) return;
+                var bar = findActionHost(row, info) || row;
+                var btn = document.createElement('a');
+                btn.href = 'javascript:void(0)';
+                btn.className = 'nga-wd-tree-btn';
+                btn.id = 'nga-wd-tree-btn-' + info.pid;
+                btn.setAttribute('data-nga-wd', 'tree-btn');
+                btn.setAttribute('data-nga-wd-floor', String(info.floor));
+                btn.textContent = entryLabel(info);
+                btn.title = (info.floor === 0)
+                    ? '\u9501\u9690\u6574\u4e2a\u4e3b\u9898\uff08\u70b9\u5f00\u9009\u62e9\uff09'
+                    : '\u9501\u9690\u8fd9\u4e00\u697c\u53ca\u5f15\u7528\u5b83\u7684\u697c\u5c42';
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (menuEl && menuAnchor === btn) {
+                        closeMenu();
+                        return;
+                    }
+                    openMenu(btn, info);
+                });
+                bar.appendChild(btn);
+            }
+
+            function refreshLabels() {
+                var btns = document.querySelectorAll('.nga-wd-tree-btn');
+                for (var i = 0; i < btns.length; i++) {
+                    var t = btns[i].textContent || '';
+                    if (t === '\u9501\u9690\u4E2D' || t === '\u68C0\u7D22\u4E2D' || t === '\u64A4\u9500\u4E2D') {
+                        var fl = Number(btns[i].getAttribute('data-nga-wd-floor'));
+                        btns[i].textContent = (fl === 0) ? '\u9501\u9690\u6574\u5e16' : '\u9501\u9690\u6811';
+                    }
+                }
+            }
+
+            function reparse() {
+                if (!getCurrentTid()) return;
+                var settings = loadSettings();
+                if (!settings.treeButtons) return;
+                refreshLabels();
+                var rows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
+                for (var i = 0; i < rows.length; i++) {
+                    injectEntry(rows[i]);
+                }
+            }
+
+            function scheduleReparse() {
+                if (debounceTimer) return;
+                debounceTimer = setTimeout(function() {
+                    debounceTimer = null;
+                    reparse();
+                }, 200);
+            }
+
+            function isOwnNode(n) {
+                return !!(n && n.nodeType === 1
+                    && ((n.id && n.id.indexOf('nga-wd-') === 0)
+                        || (n.getAttribute && n.getAttribute('data-nga-wd'))));
+            }
+
+            function isOwnMutation(m) {
+                if (!m) return true;
+                if (isOwnNode(m.target)) return true;
+                var added = m.addedNodes;
+                if (added && added.length) {
+                    for (var i = 0; i < added.length; i++) {
+                        if (isOwnNode(added[i])) return true;
+                    }
+                }
+                return false;
+            }
+
+            function handleMutations(mutations) {
+                var external = false;
+                for (var i = 0; i < mutations.length; i++) {
+                    if (!isOwnMutation(mutations[i])) {
+                        external = true;
+                        break;
+                    }
+                }
+                if (external) scheduleReparse();
+            }
+
+            function install() {
+                if (installed) return;
+                installed = true;
+                document.addEventListener('click', onDocClick, true);
+                document.addEventListener('keydown', onDocKey, true);
+                // IMPORTANT: attach the observer unconditionally.
+                // At document-start NGA has no floor rows yet and `window.__T` is still
+                // empty, so gating on getCurrentTid() here meant the observer was never
+                // installed and nothing was ever injected (entry never appeared).
+                observeDocument();
+                startFeature();
+            }
+
+            function observeDocument() {
+                if (observer) return;
+                try {
+                    observer = new MutationObserver(handleMutations);
+                    var root = document.documentElement || document.body || document.head;
+                    if (root) observer.observe(root, { childList: true, subtree: true });
+                } catch (err) {
+                    observer = null;
+                    logError('\u9501\u9690\u6811\u76d1\u89c6\u5668\u5b89\u88c5\u5931\u8d25', err);
+                }
+            }
+
+            function startFeature() {
+                if (!installed) return;
+                var settings = loadSettings();
+                if (!settings.treeButtons) return;
+                observeDocument();
+                reparse();
+                // Self-heal: if the page keeps changing without our observer firing
+                // (detached subtree swaps, re-renders), poll slowly until we managed
+                // to inject at least one entry.
+                if (!poller) {
+                    var tries = 0;
+                    poller = setInterval(function () {
+                        tries++;
+                        if (!loadSettings().treeButtons) { stopPolling(); return; }
+                        if (document.querySelector('.nga-wd-tree-btn')) { stopPolling(); return; }
+                        reparse();
+                        if (tries > 20) stopPolling();
+                    }, 500);
+                }
+            }
+
+            function stopPolling() {
+                if (poller) {
+                    clearInterval(poller);
+                    poller = null;
+                }
+            }
+
+            function stopFeature() {
+                if (debounceTimer) {
+                    clearTimeout(debounceTimer);
+                    debounceTimer = null;
+                }
+                stopPolling();
+                if (observer) {
+                    observer.disconnect();
+                    observer = null;
+                }
+                closeMenu();
+                var btns = document.querySelectorAll('.nga-wd-tree-btn');
+                for (var i = 0; i < btns.length; i++) {
+                    var b = btns[i];
+                    if (b.parentNode) b.parentNode.removeChild(b);
+                }
+            }
+
+            function onSettingsChanged(key) {
+                if (key === 'treeButtons') {
+                    var settings = loadSettings();
+                    if (!settings.treeButtons) {
+                        stopFeature();
+                    } else {
+                        startFeature();
+                    }
+                    return;
+                }
+                if (key === 'lockHideReplyTree' || key === 'lockHideAuthor'
+                    || key === 'treeMaxPages' || key === 'treeSkipLocked') {
+                    scheduleReparse();
+                }
+            }
+
+            function closeMenu() {
+                if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
+                menuEl = null;
+                menuAnchor = null;
+            }
+
+            function onDocClick(e) {
+                if (!menuEl) return;
+                var t = e && e.target;
+                if (t) {
+                    if (menuEl === t || (menuEl.contains && menuEl.contains(t))) return;
+                    if (menuAnchor && (menuAnchor === t || (menuAnchor.contains && menuAnchor.contains(t)))) return;
+                }
+                closeMenu();
+            }
+
+            function onDocKey(e) {
+                if (e && e.key === 'Escape') closeMenu();
+            }
+
+            function openMenu(btn, info) {
+                closeMenu();
+                var settings = loadSettings();
+                var menu = document.createElement('div');
+                menu.id = 'nga-wd-tree-menu';
+                menu.className = 'nga-wd-tree-menu';
+                menu.setAttribute('data-nga-wd', 'menu');
+
+                var rect = btn.getBoundingClientRect();
+                var w = pageWindow();
+                var scrollX = w.pageXOffset || document.documentElement.scrollLeft || 0;
+                var scrollY = w.pageYOffset || document.documentElement.scrollTop || 0;
+                var left = Math.round(rect.left + scrollX);
+                var top = Math.round(rect.bottom + scrollY + 4);
+                menu.style.left = left + 'px';
+                menu.style.top = top + 'px';
+
+                var title = document.createElement('div');
+                title.id = 'nga-wd-tree-menu-title';
+                title.className = 'nga-wd-tree-menu-title';
+                title.setAttribute('data-nga-wd', 'menu-title');
+                title.textContent = '\u9501\u9690\u6811';
+                menu.appendChild(title);
+
+                var hasPerm = hasWardenPermission();
+                if (!hasPerm) {
+                    var hint = document.createElement('div');
+                    hint.className = 'nga-wd-tree-menu-hint';
+                    hint.setAttribute('data-nga-wd', 'menu-hint');
+                    hint.textContent = '\u5F53\u524D\u9875\u9762\u6CA1\u6709\u7BA1\u7406\u6743\u9650';
+                    menu.appendChild(hint);
+                } else {
+                    var replyEnabled = !!settings.treeButtons && !!settings.lockHideReplyTree;
+                    var replyBtn = document.createElement('button');
+                    replyBtn.type = 'button';
+                    replyBtn.id = 'nga-wd-tree-menu-reply';
+                    replyBtn.className = 'nga-wd-tree-menu-item';
+                    replyBtn.setAttribute('data-nga-wd', 'menu-item');
+                    if (replyEnabled) {
+                        replyBtn.textContent = '\u9501\u9690\u56DE\u590D\u6811';
+                        replyBtn.addEventListener('click', function() {
+                            closeMenu();
+                            var tid = getCurrentTid();
+                            if (info.floor === 0) {
+                                runTopicLock(tid, btn);
+                            } else {
+                                runReplyTree(tid, info.pid, btn);
+                            }
+                        });
+                    } else {
+                        replyBtn.disabled = true;
+                        replyBtn.textContent = '\u9501\u9690\u56DE\u590D\u6811\uFF08\u672A\u5F00\u542F\uFF09';
+                    }
+                    menu.appendChild(replyBtn);
+
+                    if (info.floor !== 0) {
+                        var authorEnabled = !!settings.treeButtons && !!settings.lockHideAuthor;
+                        var authorBtn = document.createElement('button');
+                        authorBtn.type = 'button';
+                        authorBtn.id = 'nga-wd-tree-menu-author';
+                        authorBtn.className = 'nga-wd-tree-menu-item';
+                        authorBtn.setAttribute('data-nga-wd', 'menu-item');
+                        if (authorEnabled) {
+                            authorBtn.textContent = '\u9501\u9690\u4F5C\u8005\u6811';
+                            authorBtn.addEventListener('click', function() {
+                                closeMenu();
+                                runAuthorTree(getCurrentTid(), info.pid, info.authorUid, btn);
+                            });
+                        } else {
+                            authorBtn.disabled = true;
+                            authorBtn.textContent = '\u9501\u9690\u4F5C\u8005\u6811\uFF08\u672A\u5F00\u542F\uFF09';
+                        }
+                        menu.appendChild(authorBtn);
+                    }
+                }
+
+                document.documentElement.appendChild(menu);
+                var mh = menu.offsetHeight || 96;
+                var viewportH = w.innerHeight || document.documentElement.clientHeight || 0;
+                if (top + mh > scrollY + viewportH) {
+                    var newTop = Math.round(rect.top + scrollY - mh - 4);
+                    if (newTop >= 0) menu.style.top = newTop + 'px';
+                }
+                menuEl = menu;
+                menuAnchor = btn;
+            }
+
+            function decodeNga(buffer, contentType) {
+                var ctype = contentType || '';
+                if (/utf-?8/i.test(ctype)) {
+                    return new TextDecoder('utf-8').decode(buffer);
+                }
+                if (/gb(?:k|2312|18030)/i.test(ctype)) {
+                    return new TextDecoder('gb18030').decode(buffer);
+                }
+                try {
+                    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+                } catch (_) {
+                    return new TextDecoder('gb18030').decode(buffer);
+                }
+            }
+
+            function extractStoreJson(text) {
+                if (!text) return null;
+                var idx = text.indexOf('window.script_muti_get_var_store');
+                if (idx < 0) return null;
+                var start = text.indexOf('=', idx);
+                if (start < 0) return null;
+                start += 1;
+                while (start < text.length && /\s/.test(text.charAt(start))) start++;
+                if (text.charAt(start) !== '{') return null;
+                var depth = 0;
+                var inString = false;
+                var quoteChar = '';
+                var escaped = false;
+                for (var i = start; i < text.length; i++) {
+                    var ch = text.charAt(i);
+                    if (inString) {
+                        if (escaped) {
+                            escaped = false;
+                        } else if (ch === '\\') {
+                            escaped = true;
+                        } else if (ch === quoteChar) {
+                            inString = false;
+                        }
+                        continue;
+                    }
+                    if (ch === '"' || ch === "'") {
+                        inString = true;
+                        quoteChar = ch;
+                        continue;
+                    }
+                    if (ch === '{') {
+                        depth++;
+                    } else if (ch === '}') {
+                        depth--;
+                        if (depth === 0) {
+                            var slice = text.slice(start, i + 1);
+                            try {
+                                return JSON.parse(slice);
+                            } catch (_) {
+                                return null;
+                            }
+                        }
+                        if (depth < 0) return null;
+                    }
+                }
+                return null;
+            }
+
+            function parseLite(text) {
+                if (!text) throw new Error('lite=js \u6CA1\u6709 script_muti_get_var_store');
+                try {
+                    return JSON.parse(text);
+                } catch (_) { /* script store */ }
+                var parsed = extractStoreJson(text);
+                if (parsed === null) throw new Error('lite=js \u6CA1\u6709 script_muti_get_var_store');
+                return parsed;
+            }
+
+            function parseNukeJson(text) {
+                if (!text) return null;
+                try {
+                    return JSON.parse(text);
+                } catch (_) { /* script store */ }
+                return extractStoreJson(text);
+            }
+
+            function fetchLite(path) {
+                return fetch(path, { credentials: 'include' }).then(function(r) {
+                    if (!r.ok) throw new Error(path + ' HTTP ' + r.status);
+                    return r.arrayBuffer().then(function(buf) {
+                        return parseLite(decodeNga(buf, r.headers.get('content-type')));
+                    });
+                });
+            }
+
+            function fetchPidLou(tid, pid) {
+                return fetch(
+                    '/read.php?tid=' + tid + '&pid=' + pid + '&to=1',
+                    { credentials: 'include', cache: 'no-store' }
+                ).then(function(r) {
+                    if (!r.ok) throw new Error('pid html HTTP ' + r.status);
+                    return r.arrayBuffer().then(function(buf) {
+                        return louFromPidHtml(decodeNga(buf, r.headers.get('content-type')), pid);
+                    });
+                });
+            }
+
+            function louFromPidHtml(html, pid) {
+                var needle = 'pid' + pid + 'Anchor';
+                var at = String(html || '').indexOf(needle);
+                if (at < 0) return null;
+                var around = html.slice(Math.max(0, at - 200), at + 240);
+                var named = around.match(/name=['"]l(\d+)['"]/);
+                if (named) return Number(named[1]);
+                var box = around.match(/id=['"]postcontainer(\d+)['"]/);
+                if (box) return Number(box[1]);
+                return null;
+            }
+
+            function topicTitle() {
+                var T = pageWindow().__T;
+                return (T && (T.subject || T.title)) || '';
+            }
+
+            function liveAuthor(uid) {
+                var w = pageWindow();
+                var users = w.commonui && w.commonui.userInfo && w.commonui.userInfo.users;
+                var u = users && (users[uid] || users[String(uid)]);
+                return (u && (u.username || u.infn)) || '';
+            }
+
+            function quotedPids(content) {
+                var out = [];
+                var re = /\[pid=(\d+)/g;
+                var m;
+                while ((m = re.exec(String(content || '')))) out.push(Number(m[1]));
+                return out;
+            }
+
+            function slimPost(p, users) {
+                var content = String(p.content || '');
+                var quoted = quotedPids(content);
+                var u = (users && users[String(p.authorid)]) || {};
+                var comments = [];
+                if (p.comment && typeof p.comment === 'object') {
+                    var cv = Object.values(p.comment);
+                    for (var i = 0; i < cv.length; i++) {
+                        if (cv[i] && cv[i].pid) comments.push(Number(cv[i].pid));
+                    }
+                }
+                return {
+                    pid: Number(p.pid) || 0,
+                    lou: Number(p.lou) || 0,
+                    authorid: p.authorid,
+                    author: liveAuthor(p.authorid) || u.username || p.author || '',
+                    reply_to: Number(p.reply_to) || 0,
+                    quoted: quoted,
+                    comments: comments,
+                    type: Number(p.type) || 0
+                };
+            }
+
+            function collectFromStore(store, page) {
+                var data = (store && store.data) || {};
+                var T = data.__T || {};
+                var U = data.__U || {};
+                var rows = data.__R || {};
+                var posts = Object.keys(rows)
+                    .filter(function(k) {
+                        var p = rows[k];
+                        return p && typeof p === 'object' && p.pid;
+                    })
+                    .map(function(k) {
+                        return Object.assign(slimPost(rows[k], U), { page: page });
+                    });
+                return {
+                    tid: Number(T.tid) || 0,
+                    replies: Number(T.replies) || 0,
+                    posts: posts
+                };
+            }
+
+            function threadLastPage(replies) {
+                return Math.max(1, Math.ceil((Number(replies) + 1) / PER_PAGE));
+            }
+
+            function liveReplies() {
+                var T = pageWindow().__T;
+                if (T && T.replies != null) return Number(T.replies);
+                return 0;
+            }
+
+            function liveFloor(pid) {
+                var w = pageWindow();
+                var data = w.commonui && w.commonui.postArg && w.commonui.postArg.data;
+                if (data) {
+                    var dv = Object.values(data);
+                    for (var i = 0; i < dv.length; i++) {
+                        if (dv[i] && Number(dv[i].pid) === pid) return Number(dv[i].i);
+                    }
+                }
+                var R = w.__R;
+                if (R) {
+                    var rv = Object.values(R);
+                    for (var j = 0; j < rv.length; j++) {
+                        if (rv[j] && Number(rv[j].pid) === pid) return Number(rv[j].lou);
+                    }
+                }
+                return null;
+            }
+
+            function livePageNumber() {
+                var w = pageWindow();
+                var P = w.__PAGE;
+                if (typeof P === 'number' && P > 0) return P;
+                if (P && P[2] != null) {
+                    var n = Number(P[2]);
+                    if (n > 0) return n;
+                }
+                var m = String((w.location && w.location.search) || '').match(/[?&]page=(\d+)/);
+                return m ? Number(m[1]) : 1;
+            }
+
+            function liveThreadEnd() {
+                var w = pageWindow();
+                var P = w.__PAGE;
+                if (P && P[1] != null) {
+                    var n = Number(P[1]);
+                    if (n > 0) return n;
+                }
+                var replies = liveReplies();
+                if (replies) return threadLastPage(replies);
+                return 1;
+            }
+
+            function livePageChunk() {
+                var w = pageWindow();
+                if (!w.__R) return null;
+                return collectFromStore(
+                    { data: { __T: w.__T || {}, __U: w.__U || {}, __R: w.__R } },
+                    livePageNumber()
+                );
+            }
+
+            // \u9501\u9690 = \u9501\u5b9a(1024) | \u9690\u85cf(2) | \u5ba1\u6838(4).
+            // Only 1024/4 count as already hidden. Deliberately NOT bit 2: the
+            // reference implementation used (2|1024), which also matched 2/4 = \u5ba1\u6838
+            // (pending review, type 127) and silently skipped those floors.
+            var LOCKED_MASK = 1024 | 4;
+            function postAlreadyLocked(p) {
+                return !!(Number(p && p.type) & LOCKED_MASK);
+            }
+
+            function walkPages(pages, wanted, authorid) {
+                var uid = authorid ? Number(authorid) : 0;
+                var found = [];
+                var seen = new Set();
+                var grew = true;
+                while (grew) {
+                    grew = false;
+                    for (var i = 0; i < pages.length; i++) {
+                        var posts = pages[i].posts;
+                        for (var j = 0; j < posts.length; j++) {
+                            var p = posts[j];
+                            if (!p.pid || seen.has(p.pid)) continue;
+                            var byAuthor = uid && Number(p.authorid) === uid;
+                            var hit = byAuthor
+                                || wanted.has(p.pid)
+                                || wanted.has(p.reply_to)
+                                || p.quoted.some(function(q) { return wanted.has(q); });
+                            if (!hit) continue;
+                            seen.add(p.pid);
+                            wanted.add(p.pid);
+                            p.comments.forEach(function(c) { if (c) wanted.add(c); });
+                            found.push(p);
+                            grew = true;
+                        }
+                    }
+                }
+                found.sort(function(a, b) { return a.lou - b.lou; });
+                return found;
+            }
+
+            function fetchPageRange(tid, start, hardEnd, pages, state) {
+                if (start > hardEnd) return Promise.resolve();
+                addTreeLogEntry('info', '\u68C0\u7D22\u7B2C ' + start + ' \u9875\uFF08tid=' + tid + '\uFF09');
+                return fetchLite('/read.php?tid=' + tid + '&page=' + start + '&lite=js')
+                    .then(function(store) {
+                        var chunk = collectFromStore(store, start);
+                        state.replies = chunk.replies || state.replies;
+                        pages.push(chunk);
+                        state.lastFetched = start;
+                        if (!chunk.posts.length) return;
+                        if (start >= threadLastPage(state.replies)) return;
+                        return fetchPageRange(tid, start + 1, hardEnd, pages, state);
+                    });
+            }
+
+            function collectRange(tid, seedPid, fromPage, toPage, wantedInit, authorid) {
+                var seeds = (wantedInit && wantedInit.length)
+                    ? wantedInit.filter(function(id) { return id > 0; })
+                    : (authorid ? [] : [seedPid]);
+                var wanted = new Set(seeds);
+                var pages = [];
+                var state = { replies: liveReplies(), lastFetched: fromPage - 1 };
+                var start = Math.max(1, fromPage);
+                var hardEnd = Math.max(start, toPage);
+                return fetchPageRange(tid, start, hardEnd, pages, state).then(function() {
+                    var lastPage = state.lastFetched >= start ? state.lastFetched : start;
+                    var extra = authorid ? livePageChunk() : null;
+                    if (extra && extra.posts.length) {
+                        var covered = extra.page > 0 && extra.page >= start && extra.page <= lastPage;
+                        if (!covered) pages.push(extra);
+                    }
+                    var found = walkPages(pages, wanted, authorid);
+                    var replies = state.replies;
+                    var end = threadLastPage(replies);
+                    return {
+                        tid: tid,
+                        seedPid: seedPid,
+                        authorid: authorid || 0,
+                        startPage: start,
+                        lastPage: lastPage,
+                        replies: replies,
+                        threadEnd: replies ? end : Math.max(end, lastPage),
+                        found: found,
+                        wanted: Array.from(wanted)
+                    };
+                });
+            }
+
+            function mergeExtraPosts(tree, extras) {
+                for (var i = 0; i < extras.length; i++) {
+                    var p = extras[i];
+                    if (!p.pid || tree.found.some(function(x) { return x.pid === p.pid; })) continue;
+                    tree.found.push(p);
+                    if (tree.wanted.indexOf(p.pid) < 0) tree.wanted.push(p.pid);
+                }
+                tree.found.sort(function(a, b) { return a.lou - b.lou; });
+                return tree;
+            }
+
+            function pageFromLou(lou) {
+                var n = Number(lou);
+                if (!Number.isFinite(n) || n < 0) return 0;
+                return Math.floor(n / PER_PAGE) + 1;
+            }
+
+            function resolveSeedAnchor(tid, seedPid) {
+                return fetchLite('/read.php?tid=' + tid + '&pid=' + seedPid + '&lite=js')
+                    .then(function(store) {
+                        var one = collectFromStore(store, 0);
+                        var seed = null;
+                        for (var i = 0; i < one.posts.length; i++) {
+                            if (one.posts[i].pid === seedPid) {
+                                seed = one.posts[i];
+                                break;
+                            }
+                        }
+                        var lou = liveFloor(seedPid);
+                        if (lou == null || lou <= 0) lou = seed && seed.lou;
+                        var needHtml = !!seedPid && (lou == null || Number(lou) === 0);
+                        function finish() {
+                            if (seed && Number(lou) > 0) seed.lou = Number(lou);
+                            return {
+                                seed: seed,
+                                lou: Number(lou) || 0,
+                                page: pageFromLou(lou),
+                                replies: one.replies || 0,
+                                threadEnd: one.replies ? threadLastPage(one.replies) : 0
+                            };
+                        }
+                        if (!needHtml) return finish();
+                        return fetchPidLou(tid, seedPid).then(function(htmlLou) {
+                            if (htmlLou != null && Number(htmlLou) > 0) lou = htmlLou;
+                            return finish();
+                        }, function() {
+                            return finish();
+                        });
+                    });
+            }
+
+            function collectAuthorWindow(tid, seedPid, authorid) {
+                var uid = Number(authorid);
+                var live = (livePageChunk() || { posts: [] }).posts.filter(function(p) {
+                    return p.pid && Number(p.authorid) === uid;
+                });
+                // Only the target author's own posts seed the walk. Deliberately NOT
+                // seedPid: the seed (the floor the user clicked) may belong to someone
+                // else or merely quote the author, and seeding with it would expand the
+                // whole quote subtree and lock posts the author never wrote.
+                var wantedInit = live.map(function(p) { return p.pid; });
+                var current = livePageNumber();
+                var endHint = liveThreadEnd();
+                var seed = null;
+                var chain = Promise.resolve();
+                if (seedPid) {
+                    chain = resolveSeedAnchor(tid, seedPid).then(function(anchor) {
+                        // the anchor only locates the window; it seeds nothing
+                        if (anchor.seed) seed = anchor.seed;
+                        if (anchor.page > 0) current = anchor.page;
+                        if (anchor.threadEnd > 0) endHint = Math.max(endHint, anchor.threadEnd);
+                        if (seed && Number(seed.authorid) === uid
+                            && wantedInit.indexOf(seed.pid) < 0) {
+                            wantedInit.push(seed.pid);
+                        }
+                    });
+                }
+                return chain.then(function() {
+                    var start = Math.max(1, current - maxPages());
+                    var last = Math.min(Math.max(endHint, current), current + maxPages());
+                    return collectRange(tid, seedPid, start, last, wantedInit, authorid)
+                        .then(function(tree) {
+                            mergeExtraPosts(tree, live);
+                            // Hard guarantee for "\u9501\u9690\u4F5C\u8005\u6811": only floors actually written by
+                            // this author may be locked. collectRange's author filter already
+                            // does this, but a stale wanted-set entry or an anchor that
+                            // happens to quote the seed could leak other floors in.
+                            tree.found = tree.found.filter(function(p) {
+                                return p.pid && Number(p.authorid) === uid;
+                            });
+                            tree.wanted = tree.found.map(function(p) { return p.pid; });
+                            tree.authorName = liveAuthor(authorid)
+                                || (tree.found.find(function(p) {
+                                    return Number(p.authorid) === uid;
+                                }) || {}).author
+                                || '';
+                            if (!tree.replies) tree.replies = liveReplies();
+                            tree.threadEnd = tree.replies
+                                ? threadLastPage(tree.replies)
+                                : Math.max(endHint, tree.threadEnd, tree.lastPage);
+                            return tree;
+                        });
+                });
+            }
+
+            function collectFirstWindow(tid, seedPid) {
+                return resolveSeedAnchor(tid, seedPid).then(function(anchor) {
+                    var seed = anchor.seed;
+                    if (!seed) throw new Error('\u627E\u4E0D\u5230 pid ' + seedPid);
+                    var startPage = anchor.page > 0 ? anchor.page : 1;
+                    var cap = startPage + maxPages() - 1;
+                    return collectRange(tid, seedPid, startPage, cap, [seedPid]).then(function(tree) {
+                        if (!tree.found.some(function(p) { return p.pid === seedPid; })) {
+                            seed.page = startPage;
+                            tree.found.unshift(seed);
+                            tree.wanted.push(seedPid);
+                        }
+                        if (!tree.replies) tree.replies = anchor.replies;
+                        tree.threadEnd = tree.replies
+                            ? threadLastPage(tree.replies)
+                            : Math.max(tree.threadEnd, tree.lastPage);
+                        return tree;
+                    });
+                });
+            }
+
+            function setBits(tid, pid, pon, poff) {
+                var body = new URLSearchParams({
+                    __lib: 'topic_lock',
+                    __act: 'set',
+                    ids: tid + ',' + pid,
+                    pon: String(pon),
+                    poff: String(poff),
+                    ton: '0',
+                    toff: '0',
+                    pm: '0',
+                    info: '',
+                    raw: '3',
+                    __output: '8',
+                    __inchst: 'UTF8'
+                });
+                return fetch('/nuke.php', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: body
+                }).then(function(r) {
+                    return r.arrayBuffer().then(function(buf) {
+                        return decodeNga(buf, r.headers.get('content-type'));
+                    });
+                }).then(function(text) {
+                    var parsed;
+                    try {
+                        parsed = JSON.parse(text);
+                    } catch (_) {
+                        throw new Error('pid ' + pid + ' \u8FD4\u56DE\u65E0\u6CD5\u89E3\u6790: ' + text.slice(0, 120));
+                    }
+                    if (parsed.error) {
+                        var err = parsed.error[0] || JSON.stringify(parsed.error);
+                        throw new Error('pid ' + pid + ' ' + err);
+                    }
+                    return parsed;
+                });
+            }
+
+            function lineOf(p) {
+                var who = p.author || ('uid ' + p.authorid);
+                return '#' + p.lou + '  ' + who + '  pid=' + p.pid;
+            }
+
+            function resultText(op, fails) {
+                var pages = '\u68C0\u7D22\u7B2C ' + op.startPage + '\u2013' + op.lastPage
+                    + ' \u9875\uFF08\u5171 ' + op.threadEnd + ' \u9875\uFF09';
+                var who = op.authorName || (op.authorid ? ('uid ' + op.authorid) : '');
+                var head = op.authorid
+                    ? ('\u5DF2\u9501\u9690 ' + op.posts.length + ' \u4E2A\u56DE\u590D\uFF08' + who + ' \u7684\u53D1\u8A00\u53CA\u5F15\u7528\uFF09')
+                    : ('\u5DF2\u9501\u9690 ' + op.posts.length + ' \u4E2A\u56DE\u590D');
+                var top = op.posts.slice(0, 3).map(lineOf);
+                var more = op.posts.length > 3 ? ['...'] : [];
+                var err = fails.length ? ['\u5931\u8D25 ' + fails.length + ' \u4E2A'] : [];
+                var rest = op.lastPage < op.threadEnd
+                    ? ['\u672A\u5230\u672B\u9875\uFF0C\u8FD8\u53EF\u68C0\u7D22\u7B2C ' + (op.lastPage + 1) + '\u2013' + op.threadEnd + ' \u9875']
+                    : [];
+                return [pages, head].concat(top, more, err, rest).join('\n');
+            }
+
+            function closeToast() {
+                var old = document.getElementById('nga-wd-toast');
+                if (old) old.remove();
+            }
+
+            function addBtn(bar, label, onClick) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.textContent = label;
+                b.style.cssText = [
+                    'margin:0', 'padding:4px 10px', 'border:1px solid rgba(255,255,255,.45)',
+                    'border-radius:4px', 'background:transparent', 'color:#fff',
+                    'font:13px/1.2 sans-serif', 'cursor:pointer'
+                ].join(';');
+                b.addEventListener('click', onClick);
+                bar.appendChild(b);
+                return b;
+            }
+
+            function notify(text, isErr, actions, ms) {
+                ensureStyle();
+                closeToast();
+                var el = document.createElement('div');
+                el.id = 'nga-wd-toast';
+                el.setAttribute('data-nga-wd', 'toast');
+                el.style.cssText = [
+                    'position:fixed', 'z-index:2147483647', 'right:16px', 'top:16px',
+                    'max-width:26em', 'padding:10px 12px', 'border-radius:6px',
+                    'font:13px/1.45 "Microsoft YaHei",sans-serif', 'color:#fff',
+                    'background:' + (isErr ? '#8b1e1e' : '#1f6b3a'),
+                    'box-shadow:0 4px 16px rgba(0,0,0,.35)'
+                ].join(';');
+                var body = document.createElement('div');
+                body.className = 'nga-wd-toast-body';
+                body.style.whiteSpace = 'pre-wrap';
+                body.textContent = text;
+                el.appendChild(body);
+                if (actions && actions.length) {
+                    var bar = document.createElement('div');
+                    bar.className = 'nga-wd-toast-bar';
+                    bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;justify-content:flex-end';
+                    actions.forEach(function(a) { addBtn(bar, a.label, a.onClick); });
+                    el.appendChild(bar);
+                }
+                var track = document.createElement('div');
+                track.id = 'nga-wd-toast-bar';
+                track.setAttribute('data-nga-wd', 'bar');
+                track.style.cssText = 'height:3px;margin:10px -12px -10px;background:rgba(255,255,255,.22);overflow:hidden';
+                var fill = document.createElement('div');
+                fill.id = 'nga-wd-toast-fill';
+                fill.style.cssText = [
+                    'height:100%', 'width:100%', 'background:rgba(255,255,255,.9)',
+                    'transform-origin:left center', 'transform:scaleX(1)'
+                ].join(';');
+                track.appendChild(fill);
+                el.appendChild(track);
+                (document.documentElement || document.body).appendChild(el);
+                var wait = (ms == null ? TOAST_MS : ms);
+                var timer = null;
+                function playBar() {
+                    fill.style.animation = 'none';
+                    void fill.offsetWidth;
+                    fill.style.animation = 'nga-wd-toast-shrink ' + wait + 'ms linear forwards';
+                    fill.style.animationPlayState = 'running';
+                }
+                function hold() {
+                    if (timer) {
+                        clearTimeout(timer);
+                        timer = null;
+                    }
+                    fill.style.animationPlayState = 'paused';
+                }
+                function arm() {
+                    hold();
+                    playBar();
+                    timer = setTimeout(function() {
+                        if (el.parentNode) el.remove();
+                    }, wait);
+                }
+                el.addEventListener('mouseenter', hold);
+                el.addEventListener('mouseleave', arm);
+                arm();
+            }
+
+            function authorWindowOpen(op) {
+                return !!(op && op.authorid && !op.fullScan
+                    && (op.startPage > 1 || op.lastPage < op.threadEnd));
+            }
+
+            function showLockResult(op, fails) {
+                lastOp = op;
+                var actions = [{ label: '\u786E\u8BA4', onClick: closeToast }];
+                if (op.posts.length) {
+                    actions.push({ label: '\u64A4\u9500', onClick: function() { undoLast(); } });
+                }
+                if (authorWindowOpen(op)) {
+                    actions.push({ label: '\u6574\u5E16\u626B\u63CF', onClick: function() { scanWholeThread(); } });
+                } else if (!op.authorid && op.lastPage < op.threadEnd) {
+                    actions.push({ label: '\u7EE7\u7EED\u5230\u672B\u9875', onClick: function() { continueToEnd(); } });
+                }
+                notify(resultText(op, fails), !op.posts.length && fails.length > 0, actions);
+            }
+
+            function makeOp(tree, posts, startPage) {
+                return {
+                    tid: tree.tid,
+                    seedPid: tree.seedPid,
+                    authorid: tree.authorid || 0,
+                    authorName: tree.authorName || '',
+                    startPage: startPage || tree.startPage,
+                    lastPage: tree.lastPage,
+                    threadEnd: tree.threadEnd,
+                    replies: tree.replies,
+                    fullScan: !!tree.fullScan,
+                    posts: posts.slice(),
+                    wanted: tree.wanted ? tree.wanted.slice() : posts.map(function(p) { return p.pid; })
+                };
+            }
+
+            function serial(items, fn) {
+                var chain = Promise.resolve();
+                items.forEach(function(item) {
+                    chain = chain.then(function() { return fn(item); });
+                });
+                return chain;
+            }
+
+            function logLockOutcome(okList, fails) {
+                addTreeLogEntry('success', '\u5DF2\u9501\u9690 ' + okList.length + ' \u4E2A\u56DE\u590D');
+                if (fails.length) {
+                    addTreeLogEntry('error', '\u5931\u8D25 ' + fails.length + ' \u4E2A\uFF1A' + fails.slice(0, 3).join('\uFF1B'));
+                }
+            }
+
+            function runTopicLock(tid, btn) {
+                if (running) return;
+                if (!tid) {
+                    notify('\u6CA1\u6709 tid', true);
+                    return;
+                }
+                running = true;
+                if (btn) btn.textContent = '\u9501\u9690\u4E2D';
+                setBits(tid, 0, PON, 0).then(function() {
+                    lastOp = {
+                        kind: 'topic',
+                        tid: tid,
+                        seedPid: 0,
+                        posts: [{ pid: 0, lou: 0, author: '', authorid: 0 }],
+                        startPage: 1,
+                        lastPage: 1,
+                        threadEnd: 1,
+                        wanted: []
+                    };
+                    addTreeLogEntry('success', '\u5DF2\u9501\u9690\u4E3B\u9898 ' + tid);
+                    notify(['\u5DF2\u9501\u9690\u4E3B\u9898', topicTitle() || ('tid=' + tid)].join('\n'), false, [
+                        { label: '\u786E\u8BA4', onClick: closeToast },
+                        { label: '\u64A4\u9500', onClick: function() { undoLast(); } }
+                    ]);
+                }, function(e) {
+                    lastOp = null;
+                    addTreeLogEntry('error', String((e && e.message) || e));
+                    notify(String((e && e.message) || e), true);
+                }).then(function() {
+                    running = false;
+                    if (btn) btn.textContent = '\u9501\u9690\u6811';
+                });
+            }
+
+            function runReplyTree(tid, seedPid, btn) {
+                if (running) return;
+                if (!tid) {
+                    notify('\u6CA1\u6709 tid', true);
+                    return;
+                }
+                if (!seedPid) {
+                    notify('\u6CA1\u6709 tid/pid', true);
+                    return;
+                }
+                running = true;
+                if (btn) btn.textContent = '\u9501\u9690\u4E2D';
+                collectFirstWindow(tid, seedPid).then(function(tree) {
+                    if (!tree.found.length) {
+                        notify('\u5411\u540E ' + maxPages() + ' \u9875\u5185\u6CA1\u6709\u627E\u5230\u8FD9\u4E2A\u56DE\u590D', true);
+                        return;
+                    }
+                    var fails = [];
+                    var okList = [];
+                    var lockedPosts = tree.found.filter(function(p) {
+                        return p.pid && !(skipLocked() && postAlreadyLocked(p));
+                    });
+                    return serial(lockedPosts, function(p) {
+                        return setBits(tree.tid, p.pid, PON, 0).then(function() {
+                            okList.push(p);
+                        }, function(e) {
+                            fails.push(String((e && e.message) || e));
+                        });
+                    }).then(function() {
+                        logLockOutcome(okList, fails);
+                        showLockResult(makeOp(tree, okList), fails);
+                    });
+                }, function(e) {
+                    addTreeLogEntry('error', String((e && e.message) || e));
+                    notify(String((e && e.message) || e), true);
+                }).then(function() {
+                    running = false;
+                    if (btn) btn.textContent = '\u9501\u9690\u6811';
+                });
+            }
+
+            function runAuthorTree(tid, seedPid, authorid, btn) {
+                if (running) return;
+                if (!tid) {
+                    notify('\u6CA1\u6709 tid', true);
+                    return;
+                }
+                if (!authorid) {
+                    notify('\u6CA1\u6709\u4F5C\u8005 uid', true);
+                    return;
+                }
+                running = true;
+                if (btn) btn.textContent = '\u9501\u9690\u4E2D';
+                collectAuthorWindow(tid, seedPid, authorid).then(function(tree) {
+                    if (!tree.found.length) {
+                        notify('\u5F53\u524D\u9875\u524D\u540E\u7A97\u53E3\u5185\u6CA1\u6709\u627E\u5230\u8BE5\u4F5C\u8005\u7684\u53D1\u8A00\u6216\u5F15\u7528', true);
+                        return;
+                    }
+                    var fails = [];
+                    var okList = [];
+                    var lockedPosts = tree.found.filter(function(p) {
+                        return p.pid && !(skipLocked() && postAlreadyLocked(p));
+                    });
+                    return serial(lockedPosts, function(p) {
+                        return setBits(tree.tid, p.pid, PON, 0).then(function() {
+                            okList.push(p);
+                        }, function(e) {
+                            fails.push(String((e && e.message) || e));
+                        });
+                    }).then(function() {
+                        logLockOutcome(okList, fails);
+                        showLockResult(makeOp(tree, okList), fails);
+                    });
+                }, function(e) {
+                    addTreeLogEntry('error', String((e && e.message) || e));
+                    notify(String((e && e.message) || e), true);
+                }).then(function() {
+                    running = false;
+                    if (btn) btn.textContent = '\u9501\u9690\u6811';
+                });
+            }
+
+            function continueToEnd() {
+                if (running || !lastOp || lastOp.kind === 'topic') return;
+                if (lastOp.lastPage >= lastOp.threadEnd) return;
+                running = true;
+                var prev = lastOp;
+                var toast = document.getElementById('nga-wd-toast');
+                var btns = toast ? toast.querySelectorAll('button') : [];
+                btns.forEach(function(b) {
+                    b.disabled = true;
+                    if (b.textContent === '\u7EE7\u7EED\u5230\u672B\u9875') b.textContent = '\u68C0\u7D22\u4E2D';
+                });
+                var wantedInit = (prev.wanted && prev.wanted.length)
+                    ? prev.wanted.slice()
+                    : prev.posts.map(function(p) { return p.pid; }).concat([prev.seedPid]);
+                addTreeLogEntry('info', '\u7EE7\u7EED\u5230\u672B\u9875\uFF1A\u4ECE\u7B2C ' + (prev.lastPage + 1) + ' \u9875\u5F00\u59CB');
+                collectRange(prev.tid, prev.seedPid, prev.lastPage + 1, prev.threadEnd, wantedInit, prev.authorid)
+                    .then(function(tree) {
+                        var already = new Set(prev.posts.map(function(p) { return p.pid; }));
+                        var newFound = tree.found.filter(function(p) {
+                            return p.pid && !already.has(p.pid);
+                        });
+                        var fails = [];
+                        var okNew = [];
+                        return serial(newFound, function(p) {
+                            return setBits(prev.tid, p.pid, PON, 0).then(function() {
+                                okNew.push(p);
+                            }, function(e) {
+                                fails.push(String((e && e.message) || e));
+                            });
+                        }).then(function() {
+                            var posts = prev.posts.concat(okNew);
+                            posts.sort(function(a, b) { return a.lou - b.lou; });
+                            var seenW = new Set();
+                            var wanted = [];
+                            (prev.wanted || []).concat(tree.wanted || []).forEach(function(id) {
+                                if (!seenW.has(id)) {
+                                    seenW.add(id);
+                                    wanted.push(id);
+                                }
+                            });
+                            logLockOutcome(okNew, fails);
+                            showLockResult({
+                                tid: prev.tid,
+                                seedPid: prev.seedPid,
+                                authorid: prev.authorid || 0,
+                                authorName: prev.authorName || '',
+                                startPage: prev.startPage,
+                                lastPage: Math.max(prev.lastPage, tree.lastPage),
+                                threadEnd: tree.threadEnd || prev.threadEnd,
+                                replies: tree.replies || prev.replies,
+                                posts: posts,
+                                wanted: wanted
+                            }, fails);
+                        });
+                    })
+                    .catch(function(e) {
+                        lastOp = prev;
+                        addTreeLogEntry('error', String((e && e.message) || e));
+                        var actions = [{ label: '\u786E\u8BA4', onClick: closeToast }];
+                        if (prev.posts.length) {
+                            actions.push({ label: '\u64A4\u9500', onClick: function() { undoLast(); } });
+                        }
+                        actions.push({ label: '\u7EE7\u7EED\u5230\u672B\u9875', onClick: function() { continueToEnd(); } });
+                        notify(String((e && e.message) || e), true, actions);
+                    })
+                    .then(function() {
+                        running = false;
+                    });
+            }
+
+            function scanWholeThread() {
+                if (running || !lastOp || !lastOp.authorid || lastOp.fullScan) return;
+                running = true;
+                var prev = lastOp;
+                var toast = document.getElementById('nga-wd-toast');
+                var btns = toast ? toast.querySelectorAll('button') : [];
+                btns.forEach(function(b) {
+                    b.disabled = true;
+                    if (b.textContent === '\u6574\u5E16\u626B\u63CF') b.textContent = '\u68C0\u7D22\u4E2D';
+                });
+                var wantedInit = (prev.wanted && prev.wanted.length)
+                    ? prev.wanted.slice()
+                    : prev.posts.map(function(p) { return p.pid; }).concat([prev.seedPid]);
+                addTreeLogEntry('info', '\u6574\u5E16\u626B\u63CF\uFF1Atid=' + prev.tid);
+                collectRange(prev.tid, prev.seedPid, 1, prev.threadEnd, wantedInit, prev.authorid)
+                    .then(function(tree) {
+                        var already = new Set(prev.posts.map(function(p) { return p.pid; }));
+                        var newFound = tree.found.filter(function(p) {
+                            return p.pid && !already.has(p.pid) && !postAlreadyLocked(p);
+                        });
+                        var fails = [];
+                        var okNew = [];
+                        return serial(newFound, function(p) {
+                            return setBits(prev.tid, p.pid, PON, 0).then(function() {
+                                okNew.push(p);
+                            }, function(e) {
+                                fails.push(String((e && e.message) || e));
+                            });
+                        }).then(function() {
+                            var posts = prev.posts.concat(okNew);
+                            posts.sort(function(a, b) { return a.lou - b.lou; });
+                            var seenW = new Set();
+                            var wanted = [];
+                            (prev.wanted || []).concat(tree.wanted || []).forEach(function(id) {
+                                if (!seenW.has(id)) {
+                                    seenW.add(id);
+                                    wanted.push(id);
+                                }
+                            });
+                            logLockOutcome(okNew, fails);
+                            showLockResult({
+                                tid: prev.tid,
+                                seedPid: prev.seedPid,
+                                authorid: prev.authorid || 0,
+                                authorName: prev.authorName || '',
+                                startPage: 1,
+                                lastPage: Math.max(prev.lastPage, tree.lastPage, tree.threadEnd || prev.threadEnd),
+                                threadEnd: tree.threadEnd || prev.threadEnd,
+                                replies: tree.replies || prev.replies,
+                                fullScan: true,
+                                posts: posts,
+                                wanted: wanted
+                            }, fails);
+                        });
+                    })
+                    .catch(function(e) {
+                        lastOp = prev;
+                        addTreeLogEntry('error', String((e && e.message) || e));
+                        var actions = [{ label: '\u786E\u8BA4', onClick: closeToast }];
+                        if (prev.posts.length) {
+                            actions.push({ label: '\u64A4\u9500', onClick: function() { undoLast(); } });
+                        }
+                        actions.push({ label: '\u6574\u5E16\u626B\u63CF', onClick: function() { scanWholeThread(); } });
+                        notify(String((e && e.message) || e), true, actions);
+                    })
+                    .then(function() {
+                        running = false;
+                    });
+            }
+
+            function undoLast() {
+                if (running || !lastOp) return;
+                var op = lastOp;
+                if (!(op.posts && op.posts.length)) return;
+                running = true;
+                lastOp = null;
+                var toast = document.getElementById('nga-wd-toast');
+                var btns = toast ? toast.querySelectorAll('button') : [];
+                btns.forEach(function(b) {
+                    b.disabled = true;
+                    if (b.textContent === '\u64A4\u9500') b.textContent = '\u64A4\u9500\u4E2D';
+                });
+                var fails = [];
+                var lines = [];
+                var posts = op.posts || [];
+                var tid = op.tid;
+                var undone = [];
+                serial(posts, function(p) {
+                    return setBits(tid, p.pid, 0, PON).then(function() {
+                        undone.push(p);
+                    }, function(e) {
+                        fails.push(String((e && e.message) || e));
+                    });
+                }).then(function() {
+                    if (op.kind === 'topic') {
+                        lines.push('\u5DF2\u64A4\u9500\u4E3B\u9898' + (undone.length ? '' : '\u5931\u8D25'));
+                        lines.push(topicTitle() || ('tid=' + tid));
+                    } else {
+                        lines.push('\u5DF2\u64A4\u9500 ' + undone.length + ' \u4E2A\u56DE\u590D\uFF08\u539F\u68C0\u7D22\u7B2C '
+                            + (op.startPage || '?') + '\u2013' + (op.lastPage || '?') + ' \u9875\uFF09');
+                        undone.slice(0, 3).forEach(function(p) { lines.push(lineOf(p)); });
+                        if (undone.length > 3) lines.push('...');
+                    }
+                    if (fails.length) lines.push('\u5931\u8D25 ' + fails.length + ' \u4E2A');
+                    var ok = lines.some(function(s) { return s.indexOf('\u5DF2\u64A4\u9500') === 0; });
+                    if (undone.length) {
+                        addTreeLogEntry('success', '\u5DF2\u64A4\u9500 ' + undone.length + ' \u4E2A\u56DE\u590D');
+                    }
+                    if (fails.length) {
+                        addTreeLogEntry('error', '\u64A4\u9500\u5931\u8D25 ' + fails.length + ' \u4E2A\uFF1A' + fails.slice(0, 3).join('\uFF1B'));
+                    }
+                    notify(lines.join('\n') || '\u64A4\u9500\u5931\u8D25', !ok, [
+                        { label: '\u786E\u8BA4', onClick: closeToast }
+                    ]);
+                }).then(function() {
+                    running = false;
+                });
+            }
+
+            // Runtime diagnostics for the host's "\u9875\u9762\u81ea\u68c0" button. Returns a
+            // plain object so a failure can be attributed to a specific step.
+            function inspect() {
+                var out = {
+                    installed: installed,
+                    observing: !!observer,
+                    polling: !!poller,
+                    tid: 0,
+                    rows: 0,
+                    rowsWithPid: 0,
+                    injected: 0,
+                    firstRow: null,
+                    treeButtons: false
+                };
+                try { out.tid = Number(getCurrentTid()) || 0; } catch (err) { out.tid = -1; }
+                try { out.treeButtons = !!loadSettings().treeButtons; } catch (err) { out.treeButtons = null; }
+                var rows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
+                out.rows = rows.length;
+                for (var i = 0; i < rows.length; i++) {
+                    if (rows[i].querySelector('[id^="pid"]')) out.rowsWithPid++;
+                }
+                if (rows.length) {
+                    var info = readRow(rows[0]);
+                    out.firstRow = {
+                        id: rows[0].id,
+                        floor: info.floor,
+                        pid: info.pid,
+                        authorUid: info.authorUid,
+                        host: !!findActionHost(rows[0], info)
+                    };
+                }
+                out.injected = document.querySelectorAll('.nga-wd-tree-btn').length;
+                return out;
+            }
+
+            return {
+                install: install,
+                onSettingsChanged: onSettingsChanged,
+                inspect: inspect
+            };
+        }
+    // ---- end spliced module: tree-feature.js ----
+
+    // ---- spliced module: nuke-defaults.js ----
+        function buildNukeDefaults() {
+            var NUKE_DELETE_LABEL = '\u5220\u9664\u6b64\u8d34';
+            var NUKE_DELETE_LABEL_ALT = '\u5220\u9664\u6b64\u5e16';
+            var NUKE_DEFAULTS_MARK = 'data-nga-warden-nuke-defaults';
+            var LESSER_USER_EDIT = 'data-nga-lesser-user-edited';
+            var LESSER_MODE_NAME = 'nga-warden-lesser-delete-mode';
+            var MAIN_NUKE_MARK = '\u6b64\u65f6\u95f4\u540e\u53d1\u5e03\u7684\u4e3b\u9898\u4e0e\u56de\u590d\u5c06\u88ab\u5220\u9664';
+            var BTN_LESSER = 14;
+
+            var nukeOpenSeq = 0;
+            var nukeAppliedSeq = 0;
+            var nukeUserEdited = false;
+            var nukeWasSecondary = new WeakMap();
+            var nukeShown = new WeakMap();
+            var pendingNukeDefaults = new Set();
+            var lastLesserTarget = null;
+            var nukeReported = new WeakMap();
+            var nukeDelayHintLogged = false;
+            var nukeScanTimer = null;
+            var nukeHookStarted = false;
+            var nukeHookTimer = null;
+            var nukePollStarted = false;
+            var nukeDefaultsWatchStarted = false;
+            var nukeDefaultsWatch = {observer: null};
+
+            function controlLabel(el) {
+                var sib = el.nextSibling;
+                var s = '';
+                var guard = 0;
+                while (sib && guard < 8) {
+                    if (sib.nodeType === 1) {
+                        var tag = String(sib.tagName || '').toUpperCase();
+                        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+                            || tag === 'BUTTON') break;
+                        if (tag === 'BR' || tag === 'HR') {
+                            if (s.trim()) break;
+                            sib = sib.nextSibling;
+                            guard++;
+                            continue;
+                        }
+                    }
+                    var chunk = sib.textContent || '';
+                    if (chunk) s += chunk;
+                    if (s.trim()) break;
+                    sib = sib.nextSibling;
+                    guard++;
+                }
+                return s.replace(/\s+/g, ' ').trim();
+            }
+
+            function labelKey(label) {
+                return String(label || '')
+                    .replace(/\uff08[^\uff09]*\uff09/g, '')
+                    .replace(/\([^)]*\)/g, '')
+                    .replace(/\s+/g, '');
+            }
+
+            function pickByLabel(inputs, prefix) {
+                var want = String(prefix || '');
+                if (!want) return null;
+                var wantKey = labelKey(want);
+                for (var i = 0; i < inputs.length; i++) {
+                    var lab = controlLabel(inputs[i]);
+                    if (lab.indexOf(want) === 0) return inputs[i];
+                    var key = labelKey(lab);
+                    if (wantKey && key.indexOf(wantKey) === 0) return inputs[i];
+                }
+                return null;
+            }
+
+            function findLesserArg(tid, pid) {
+                var data = pageWindow().commonui && pageWindow().commonui.postArg
+                    && pageWindow().commonui.postArg.data;
+                if (!data) return null;
+                var values = Object.values(data);
+                for (var i = 0; i < values.length; i++) {
+                    var arg = values[i];
+                    if (arg && Number(arg.tid) === Number(tid)
+                        && Number(arg.pid || 0) === Number(pid || 0)) {
+                        return arg;
+                    }
+                }
+                return null;
+            }
+
+            function targetLesserAllowed(target) {
+                var arg = target && (target.arg || findLesserArg(target.tid, target.pid));
+                if (!arg) return false;
+                try {
+                    return !!officialLesserAllowed(arg);
+                } catch (err) {
+                    return false;
+                }
+            }
+
+            // \u5bbf\u4e3b\u63d0\u4f9b\u7684\u901a\u7528\u6743\u9650\u5224\u5b9a\uff08\u5b98\u65b9 postBtn.d[41]/d[14] \u7684 ck()\uff09\u3002
+            // \u4e0d\u91cd\u65b0\u5b9a\u4e49\uff0c\u76f4\u63a5\u7528\u5bbf\u4e3b\u7684\uff1b\u62ff\u4e0d\u5230\u5c31\u5f53\u4f5c\u6ca1\u6743\u9650\u3002
+            function pageCanManage(arg) {
+                try {
+                    return !!(arg && hasWardenPermission(arg));
+                } catch (err) {
+                    return false;
+                }
+            }
+
+            function targetFromOpenArgs(args) {
+                var tid = Number(args && args[1]) || 0;
+                var pid = Number(args && args[2]) || 0;
+                var fid = Number(args && args[3]) || Number(pageWindow().__CURRENT_FID) || 0;
+                var arg = findLesserArg(tid, pid);
+                return {tid: tid, pid: pid, fid: fid, arg: arg};
+            }
+
+            // Fallback target: the current page's own topic/post.
+            // Needed because NGA does not always go through postBtn.d[14].on or
+            // commonui.lessernuke (entry points differ between desktop/mobile and
+            // NGA versions), and without a target every apply attempt is skipped.
+            function targetFromPage() {
+                var w = pageWindow();
+                var T = w.__T || {};
+                // __T is not always populated when the dialog opens (NGA renders post
+                // data asynchronously), so fall back to the host's URL-based tid.
+                var tid = Number(T.tid) || Number(w.__CURRENT_TID) || 0;
+                if (!tid) {
+                    try { tid = Number(getCurrentTid()) || 0; } catch (err) { tid = 0; }
+                }
+                var data = w.commonui && w.commonui.postArg && w.commonui.postArg.data;
+                var args = data ? Object.values(data) : [];
+                var pid = 0;
+                var arg = null;
+                for (var i = 0; i < args.length; i++) {
+                    var a = args[i];
+                    if (!a || Number(a.tid) !== tid) continue;
+                    if (!arg) { arg = a; pid = Number(a.pid) || 0; }
+                }
+                if (!arg && args.length === 1) arg = args[0];
+                // the dialog for the topic itself (no reply selected) uses pid 0
+                if (arg && !Number(arg.pid)) pid = 0;
+                return {
+                    tid: tid,
+                    pid: pid,
+                    fid: Number(w.__CURRENT_FID) || 0,
+                    arg: arg
+                };
+            }
+
+            function beginNukeOpen(target) {
+                nukeOpenSeq += 1;
+                nukeAppliedSeq = 0;
+                nukeUserEdited = false;
+                var use = (target && target.tid) ? target : targetFromPage();
+                if (use && use.tid) lastLesserTarget = use;
+                pendingNukeDefaults.clear();
+                var panels = document.querySelectorAll('.commonwindow');
+                for (var i = 0; i < panels.length; i++) {
+                    panels[i].removeAttribute(LESSER_USER_EDIT);
+                }
+            }
+
+            function listenNukeUserEdits(panel) {
+                if (panel.getAttribute('data-nga-warden-nuke-listen') === '1') return;
+                panel.setAttribute('data-nga-warden-nuke-listen', '1');
+                function mark(e) {
+                    var t = e && e.target;
+                    if (!t || !t.matches) return;
+                    if (t.matches(
+                        'input[name="opt0"], input[name="opt1"], input[name="opt2"],'
+                        + ' input[name="' + LESSER_MODE_NAME + '"],'
+                        + ' select[data-nga-warden-delete-delay],'
+                        + ' input[type="checkbox"], input[type="text"], textarea'
+                    )) {
+                        nukeUserEdited = true;
+                        panel.setAttribute(LESSER_USER_EDIT, '1');
+                    }
+                }
+                panel.addEventListener('click', mark, true);
+                panel.addEventListener('change', mark, true);
+            }
+
+            function effectiveLesserDefaults() {
+                var settings = loadAppSettings() || {};
+                if (settings.nukeDefaultsOn === false) return null;
+                return {
+                    scope: String(settings.lesserNukeScope || '\u5927\u533a\u5185'),
+                    days: String(settings.lesserNukeDays || '\u7981\u8a004\u5929'),
+                    reputation: String(settings.lesserNukeReputation || '\u4e0d\u6263\u51cf'),
+                    deductPrestige: !!settings.lesserDeductPrestige,
+                    delay: !!settings.lesserDelay,
+                    note: String(settings.lesserNukeNote || ''),
+                    noteLong: String(settings.lesserNukeNoteLong || ''),
+                    deleteMode: 'delete',
+                    deleteDelay: String(settings.lesserNukeDeleteDelay != null
+                        ? settings.lesserNukeDeleteDelay : '0'),
+                    deletePost: settings.lesserNukeDeletePost !== false
+                };
+            }
+
+            function lesserThemeNote(panel) {
+                if (!panel) return null;
+                return panel.querySelector('input[data-nga-warden-lesser-note]')
+                    || panel.querySelector('input[placeholder*="\u64cd\u4f5c\u8bf4\u660e"]')
+                    || panel.querySelector('input[placeholder*="\u5c06\u88ab\u7981\u6b62\u586b\u5199"]')
+                    || panel.querySelector('input[maxlength="20"]:not([type="checkbox"]):not([type="radio"])');
+            }
+
+            function lesserSmsNote(panel) {
+                if (!panel) return null;
+                return panel.querySelector('textarea[data-nga-warden-lesser-note-long]')
+                    || panel.querySelector('textarea[placeholder*="\u66f4\u957f\u7684\u64cd\u4f5c\u8bf4\u660e"]')
+                    || panel.querySelector('textarea[placeholder*="\u77ed\u4fe1"]');
+            }
+
+            function markLesserNotes(panel) {
+                var note = lesserThemeNote(panel);
+                if (note) note.setAttribute('data-nga-warden-lesser-note', '1');
+                var noteLong = lesserSmsNote(panel);
+                if (noteLong) noteLong.setAttribute('data-nga-warden-lesser-note-long', '1');
+                return {note: note, noteLong: noteLong};
+            }
+
+            function isOfficialLesserReasonBox(el) {
+                if (!el || el.type !== 'checkbox') return false;
+                if (el.getAttribute('data-nga-warden-lesser-note')) return false;
+                var v = String(el.value || '');
+                if (!v || v === 'on') return false;
+                if (v.indexOf('\u5c06\u88ab\u7981\u6b62\u586b\u5199') >= 0) return false;
+                if (el.hidden) return false;
+                return true;
+            }
+
+            function officialReasonBoxFromEvent(event) {
+                var t = event && event.target;
+                if (!t) return null;
+                if (t.nodeType === 3) t = t.parentElement;
+                if (isOfficialLesserReasonBox(t)) return t;
+                var wrap = t.closest && t.closest('label');
+                var box = wrap && wrap.querySelector('input[type="checkbox"]');
+                return isOfficialLesserReasonBox(box) ? box : null;
+            }
+
+            function clearPrefillIfOfficialReason(panel, box) {
+                if (!box || !box.checked) return;
+                var settings = loadAppSettings() || {};
+                if (settings.lesserClearNoteOnOfficialReason === false) return;
+                var note = lesserThemeNote(panel);
+                if (!note) return;
+                var def = String((effectiveLesserDefaults() || {}).note || '');
+                if (def && note.value === def) note.value = '';
+            }
+
+            function installClearNoteOnOfficialReason(panel) {
+                if (!panel || panel.getAttribute('data-nga-warden-clear-note') === '1') {
+                    return;
+                }
+                panel.setAttribute('data-nga-warden-clear-note', '1');
+                function onPick(event) {
+                    clearPrefillIfOfficialReason(panel, officialReasonBoxFromEvent(event));
+                }
+                panel.addEventListener('change', onPick, true);
+                panel.addEventListener('click', onPick, true);
+            }
+
+            function noteDeleteDelayLimitation() {
+                if (nukeDelayHintLogged) return;
+                var settings = loadAppSettings() || {};
+                var delay = String(settings.lesserNukeDeleteDelay != null
+                    ? settings.lesserNukeDeleteDelay : '0');
+                if (settings.lesserNukeDeletePost && delay !== '0') {
+                    nukeDelayHintLogged = true;
+                    addTreeLogEntry('info', '\u5df2\u4fdd\u5b58\u300c\u5ef6\u65f6\u5220\u9664\u300d\u8bbe\u7f6e\uff0c\u4f46\u5f53\u524d\u5de5\u5177\u4e0d\u652f\u6301\u5ef6\u65f6\u5220\u9664\uff0c\u8be5\u8bbe\u7f6e\u4e0d\u4f1a\u751f\u6548');
+                }
+            }
+
+            function applyNukeDefaults(panel) {
+                try {
+                    if (nukeUserEdited || panel.getAttribute(LESSER_USER_EDIT) === '1') return true;
+                    // Prefer the target recorded when the dialog was opened; fall back
+                    // to the current page's own post so that opening the dialog through
+                    // a path we do not hook still gets the defaults applied.
+                    var target = lastLesserTarget || targetFromPage();
+                    if (!target || !target.tid) return false;
+                    if (!targetLesserAllowed(target) && !hasWardenPermission(target.arg)) return true;
+                    var eff = effectiveLesserDefaults();
+                    if (!eff) return true;
+                    var scopeLabel = String(eff.scope || '\u5927\u533a\u5185');
+                    var daysLabel = String(eff.days || '\u7981\u8a004\u5929');
+                    var deleteOn = eff.deletePost !== false;
+                    var scopeInputs = Array.from(panel.querySelectorAll('input[name="opt0"]'));
+                    var daysInputs = Array.from(panel.querySelectorAll('input[name="opt1"]'));
+                    var repInputs = Array.from(panel.querySelectorAll('input[name="opt2"]'));
+                    var boxes = Array.from(panel.querySelectorAll('input[type="checkbox"]'));
+                    var scope = pickByLabel(scopeInputs, scopeLabel);
+                    var days = pickByLabel(daysInputs, daysLabel);
+                    var rep = pickByLabel(repInputs, String(eff.reputation || '\u4e0d\u6263\u51cf'));
+                    var prestige = pickByLabel(boxes, '\u540c\u65f6\u6263\u51cf\u5a01\u671b');
+                    var muteDelay = pickByLabel(boxes, '\u5ef6\u65f6');
+                    var del = pickByLabel(boxes, NUKE_DELETE_LABEL)
+                        || pickByLabel(boxes, NUKE_DELETE_LABEL_ALT);
+                    var notes = markLesserNotes(panel);
+                    var note = notes.note;
+                    var noteLong = notes.noteLong;
+                    if (scope) {
+                        scope.checked = true;
+                        scope.setAttribute(NUKE_DEFAULTS_MARK, '');
+                    }
+                    if (days) {
+                        days.checked = true;
+                        days.setAttribute(NUKE_DEFAULTS_MARK, '');
+                    }
+                    if (rep) {
+                        rep.checked = true;
+                        rep.setAttribute(NUKE_DEFAULTS_MARK, '');
+                    }
+                    if (prestige) prestige.checked = !!eff.deductPrestige;
+                    if (muteDelay) muteDelay.checked = !!eff.delay;
+                    if (note && !note.value) note.value = String(eff.note || '');
+                    if (noteLong && !noteLong.value) noteLong.value = String(eff.noteLong || '');
+                    if (del) {
+                        del.checked = deleteOn;
+                        del.setAttribute(NUKE_DEFAULTS_MARK, '');
+                    }
+                    // \u9650\u5236\uff1a\u53c2\u8003\u5b9e\u73b0\u7684\u300c\u7acb\u523b\u9501\u9690\u5e76\u5ef6\u8fdf\u5220\u9664\u300d(installLesserLayout /
+                    // lock-delay) \u672a\u79fb\u690d\uff1b\u672c\u5de5\u5177\u53ea\u8d1f\u8d23\u9884\u586b\u5b98\u65b9\u5f39\u7a97\uff0c\u4e0d\u53d1\u9001\u4efb\u4f55\u8bf7\u6c42\u3002
+                    noteDeleteDelayLimitation();
+                    var done = !!(del && scopeInputs.length && daysInputs.length);
+                    if (done) {
+                        nukeAppliedSeq = nukeOpenSeq;
+                        listenNukeUserEdits(panel);
+                        installClearNoteOnOfficialReason(panel);
+                        if (nukeReported.get(panel) !== 'success') {
+                            nukeReported.set(panel, 'success');
+                            addTreeLogEntry('success', '\u5df2\u628a\u6b21\u7ea7NUKE\u9ed8\u8ba4\u503c\u5e94\u7528\u5230\u5f53\u524d\u5f39\u7a97');
+                        }
+                        return true;
+                    }
+                    return false;
+                } catch (err) {
+                    logError('\u5e94\u7528\u6b21\u7ea7NUKE\u9ed8\u8ba4\u503c\u5931\u8d25', err);
+                    return false;
+                }
+            }
+
+            function isSecondaryNukePanel(panel) {
+                try {
+                    if (!panel) return false;
+                    var title = panel.querySelector('.tip_title');
+                    if (title && title.textContent.indexOf('\u6b21\u7ea7NUKE') >= 0) return true;
+                    if ((panel.textContent || '').indexOf(MAIN_NUKE_MARK) >= 0) return false;
+                    var scopeInputs = panel.querySelectorAll('input[name="opt0"]');
+                    var daysInputs = Array.from(panel.querySelectorAll('input[name="opt1"]'));
+                    if (!scopeInputs.length || !daysInputs.length) return false;
+                    var boxes = Array.from(panel.querySelectorAll('input[type="checkbox"]'));
+                    return !!(pickByLabel(boxes, NUKE_DELETE_LABEL)
+                        || pickByLabel(boxes, NUKE_DELETE_LABEL_ALT)
+                        || pickByLabel(daysInputs, '\u7981\u8a00'));
+                } catch (err) {
+                    return false;
+                }
+            }
+
+            function watchNukeDefaults(panel) {
+                if (!panel || !panel.querySelector) return;
+                if (nukeUserEdited || (panel && panel.getAttribute(LESSER_USER_EDIT) === '1')) return;
+                if (nukeOpenSeq && nukeAppliedSeq === nukeOpenSeq) return;
+                if (pendingNukeDefaults.has(panel)) return;
+                pendingNukeDefaults.add(panel);
+                var tries = 0;
+                var t = setInterval(function () {
+                    tries++;
+                    if (nukeUserEdited || tries > 25) {
+                        clearInterval(t);
+                        pendingNukeDefaults.delete(panel);
+                        if (!nukeUserEdited && tries > 25
+                            && isSecondaryNukePanel(panel)
+                            && nukeReported.get(panel) !== 'success') {
+                            nukeReported.set(panel, 'error');
+                            addTreeLogEntry('error', '\u6b21\u7ea7NUKE\u9ed8\u8ba4\u503c\u5e94\u7528\u5931\u8d25\uff1a\u5f39\u7a97\u9009\u9879\u4e0d\u5b8c\u6574');
+                        }
+                        return;
+                    }
+                    if (!isSecondaryNukePanel(panel)) return;
+                    var target = lastLesserTarget || targetFromPage();
+                    var allow = target && target.tid
+                        && (targetLesserAllowed(target) || hasWardenPermission(target.arg));
+                    if (allow && applyNukeDefaults(panel)) {
+                        clearInterval(t);
+                        pendingNukeDefaults.delete(panel);
+                    }
+                }, 100);
+            }
+
+            function noteNukePanel(panel) {
+                if (!panel) return;
+                try {
+                    var now = isSecondaryNukePanel(panel);
+                    var was = nukeWasSecondary.get(panel);
+                    if (now && !was) beginNukeOpen();
+                    nukeWasSecondary.set(panel, now);
+                    if (now) {
+                        var r = panel.getBoundingClientRect();
+                        if (r.width > 2 && r.height > 2) nukeShown.set(panel, true);
+                        watchNukeDefaults(panel);
+                    }
+                } catch (err) {
+                    logError('\u8bb0\u5f55\u6b21\u7ea7NUKE\u9762\u677f\u72b6\u6001\u5931\u8d25', err);
+                }
+            }
+
+            function scanNukeDefaults(node) {
+                try {
+                    var el = node && (node.nodeType === 1 ? node : node.parentElement);
+                    if (!el || !el.closest) return;
+                    var own = el.closest('.commonwindow');
+                    if (own) noteNukePanel(own);
+                    if (el.querySelectorAll) {
+                        var panels = el.querySelectorAll('.commonwindow');
+                        for (var i = 0; i < panels.length; i++) {
+                            noteNukePanel(panels[i]);
+                        }
+                    }
+                } catch (err) {
+                    logError('\u626b\u63cf\u6b21\u7ea7NUKE\u9762\u677f\u5931\u8d25', err);
+                }
+            }
+
+            function debounceScanNukeDefaults() {
+                if (nukeScanTimer) return;
+                nukeScanTimer = setTimeout(function () {
+                    nukeScanTimer = null;
+                    try {
+                        scanNukeDefaults(document.documentElement);
+                    } catch (err) {
+                        logError('\u626b\u63cf\u6b21\u7ea7NUKE\u9762\u677f\u5931\u8d25', err);
+                    }
+                }, 60);
+            }
+
+            function hookLesserNukeOpen() {
+                var w = pageWindow();
+                var common = w.commonui;
+                if (!common || !common.postBtn || !common.mainMenuItems) return true;
+                var pb = common.postBtn;
+                if (!pb.d || typeof pb.d !== 'object') return false;
+                var spec = pb.d[BTN_LESSER];
+                if (spec && !spec._ngaWdNukeDefaultsOn) {
+                    var origOn = spec.on;
+                    spec.on = function (event, arg) {
+                        var target = arg && arg.tid ? {
+                            tid: Number(arg.tid) || 0,
+                            pid: Number(arg.pid) || 0,
+                            fid: Number(w.__CURRENT_FID) || 0,
+                            arg: arg
+                        } : null;
+                        beginNukeOpen(target);
+                        var ret = origOn ? origOn.apply(this, arguments) : undefined;
+                        setTimeout(function () { scanNukeDefaults(document.documentElement); }, 0);
+                        setTimeout(function () { scanNukeDefaults(document.documentElement); }, 80);
+                        return ret;
+                    };
+                    spec._ngaWdNukeDefaultsOn = true;
+                }
+                if (typeof common.lessernuke !== 'function') return false;
+                if (common.lessernuke._ngaWdNukeDefaults) return true;
+                var orig = common.lessernuke.bind(common);
+                function wrapped() {
+                    beginNukeOpen(targetFromOpenArgs(arguments));
+                    var ret = orig.apply(this, arguments);
+                    setTimeout(function () { scanNukeDefaults(document.documentElement); }, 0);
+                    setTimeout(function () { scanNukeDefaults(document.documentElement); }, 80);
+                    return ret;
+                }
+                wrapped._ngaWdNukeDefaults = true;
+                common.lessernuke = wrapped;
+                return true;
+            }
+
+            function startHookRetry() {
+                if (nukeHookStarted) return;
+                nukeHookStarted = true;
+                var tries = 0;
+                (function attempt() {
+                    var done = false;
+                    try {
+                        done = hookLesserNukeOpen();
+                    } catch (err) {
+                        logError('\u6302\u63a5\u6b21\u7ea7NUKE\u6253\u5f00\u8def\u5f84\u5931\u8d25', err);
+                        done = true;
+                    }
+                    tries += 1;
+                    if (done || tries >= 120) return;
+                    nukeHookTimer = setTimeout(attempt, 250);
+                })();
+            }
+
+            var PACK_CHROME_SEL = [
+                '[id^="nga-wb-"]',
+                '[id^="nga-warden-"]',
+                '[id^="nga-lht-"]',
+                '[data-nga-wb-compose-split]',
+                '[data-nga-wb-compose-preview]',
+                '[data-nga-wb-compose-status]',
+                '[data-nga-wb-compose-toggle]',
+                '[data-nga-wb-compose-toggle-row]',
+                '[data-nga-warden-reply]',
+                '[data-superlesser-quick-reply]',
+                '[data-superlesser-topic-action]'
+            ].join(',');
+
+            function nodeIsScriptChrome(el) {
+                if (!el || el.nodeType !== 1) return false;
+                var id = el.id || '';
+                if (id.indexOf('nga-wb-') === 0
+                    || id.indexOf('nga-warden-') === 0
+                    || id.indexOf('nga-lht-') === 0) {
+                    return true;
+                }
+                try {
+                    if (el.matches && el.matches(PACK_CHROME_SEL)) return true;
+                    if (el.closest && el.closest(PACK_CHROME_SEL)) return true;
+                } catch (_) { /* detached */ }
+                return false;
+            }
+
+            function pollNukeVisibility() {
+                try {
+                    var panels = document.querySelectorAll('.commonwindow');
+                    for (var i = 0; i < panels.length; i++) {
+                        var panel = panels[i];
+                        if (!isSecondaryNukePanel(panel)) {
+                            nukeShown.set(panel, false);
+                            continue;
+                        }
+                        var r = panel.getBoundingClientRect();
+                        var vis = r.width > 2 && r.height > 2;
+                        var wasVis = nukeShown.get(panel) === true;
+                        nukeShown.set(panel, vis);
+                        if (vis && !wasVis) {
+                            beginNukeOpen();
+                            watchNukeDefaults(panel);
+                        }
+                    }
+                } catch (err) {
+                    logError('\u8f6e\u8be2\u6b21\u7ea7NUKE\u9762\u677f\u53ef\u89c1\u6027\u5931\u8d25', err);
+                }
+            }
+
+            function installNukeDefaultsWatcher() {
+                startHookRetry();
+                if (nukeDefaultsWatchStarted) return;
+                nukeDefaultsWatchStarted = true;
+                try {
+                    nukeDefaultsWatch.observer = new MutationObserver(function (mutations) {
+                        try {
+                            var sawNuke = false;
+                            for (var i = 0; i < mutations.length; i++) {
+                                var m = mutations[i];
+                                if (m.target && nodeIsScriptChrome(m.target)) continue;
+                                if (m.target && m.target.closest
+                                    && m.target.closest('#m_posts')
+                                    && !m.target.closest('.commonwindow')) {
+                                    continue;
+                                }
+                                var added = m.addedNodes;
+                                for (var j = 0; j < added.length; j++) {
+                                    var node = added[j];
+                                    if (!node || node.nodeType !== 1) continue;
+                                    if (nodeIsScriptChrome(node)) continue;
+                                    if ((node.matches && node.matches('.commonwindow'))
+                                        || (node.querySelector && node.querySelector('.commonwindow'))) {
+                                        sawNuke = true;
+                                    }
+                                }
+                            }
+                            if (!sawNuke) return;
+                            debounceScanNukeDefaults();
+                        } catch (err) {
+                            logError('\u89c2\u5bdf\u6b21\u7ea7NUKE\u9762\u677f\u5931\u8d25', err);
+                        }
+                    });
+                    scanNukeDefaults(document.documentElement);
+                    nukeDefaultsWatch.observer.observe(document.documentElement, {
+                        childList: true,
+                        subtree: true
+                    });
+                    if (!nukePollStarted) {
+                        nukePollStarted = true;
+                        setInterval(pollNukeVisibility, 300);
+                    }
+                } catch (err) {
+                    logError('\u5b89\u88c5\u6b21\u7ea7NUKE\u9ed8\u8ba4\u503c\u76d1\u89c6\u5668\u5931\u8d25', err);
+                }
+            }
+
+            function install() {
+                try {
+                    installNukeDefaultsWatcher();
+                } catch (err) {
+                    logError('\u5b89\u88c5\u6b21\u7ea7NUKE\u9ed8\u8ba4\u503c\u6a21\u5757\u5931\u8d25', err);
+                }
+            }
+
+            function applyNow() {
+                try {
+                    beginNukeOpen(lastLesserTarget || null);
+                    scanNukeDefaults(document.documentElement);
+                } catch (err) {
+                    logError('\u91cd\u65b0\u5e94\u7528\u6b21\u7ea7NUKE\u9ed8\u8ba4\u503c\u5931\u8d25', err);
+                }
+            }
+
+            return {
+                install: install,
+                applyNow: applyNow
+            };
+        }
+    // ---- end spliced module: nuke-defaults.js ----
+
+    // ==================== MODULE_SPLICE_POINT ====================
 
 })();
