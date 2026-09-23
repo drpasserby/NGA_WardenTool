@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.4
+// @version      1.3.5
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -374,7 +374,6 @@
         lesserDelay: false,            // 延时(禁言延时生效)
         lesserNukeNote: '',            // 默认操作说明(主题)
         lesserNukeNoteLong: '',        // 默认操作说明(短信)
-        lesserClearNoteOnOfficialReason: true, // 选官方处罚理由时清除预填说明
         lesserNukeDeletePost: true     // 勾选"删除此贴"
     };
 
@@ -1674,7 +1673,6 @@
                                     '<input type="checkbox" data-nuke-setting="lesserNukeDeletePost">' +
                                     '<span class="kw-slider"></span>' +
                                 '</label>' +
-                                '<span style="font-size:11px;color:#8b6914;">"立刻锁隐并延迟删除"未在本工具内实现</span>' +
                             '</div>' +
                             '<div class="warden-form-row">' +
                                 '<label>默认操作说明(主题):</label>' +
@@ -1685,14 +1683,6 @@
                                 '<label>默认操作说明(短信):</label>' +
                                 '<input type="text" class="warden-input" data-nuke-setting="lesserNukeNoteLong" placeholder="留空则不填">' +
                                 '<span style="font-size:11px;color:#8b6914;">仅在官方短信说明框为空时填入</span>' +
-                            '</div>' +
-                            '<div class="warden-form-row">' +
-                                '<label>选官方理由时清空说明:</label>' +
-                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
-                                    '<input type="checkbox" data-nuke-setting="lesserClearNoteOnOfficialReason">' +
-                                    '<span class="kw-slider"></span>' +
-                                '</label>' +
-                                '<span style="font-size:11px;color:#8b6914;">勾选次级NUKE官方可选处罚理由后，清空预填的主题操作说明</span>' +
                             '</div>' +
                             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">' +
                                 '<button class="warden-btn" id="warden-btn-nuke-apply" title="把上面的默认值立刻回填到当前已打开的次级NUKE弹窗">立即应用到已打开的弹窗</button>' +
@@ -5316,7 +5306,6 @@
             var pendingNukeDefaults = new Set();
             var lastLesserTarget = null;
             var nukeReported = new WeakMap();
-            var nukeDelayHintLogged = false;
             var nukeScanTimer = null;
             var nukeHookStarted = false;
             var nukeHookTimer = null;
@@ -5489,9 +5478,6 @@
                     delay: !!settings.lesserDelay,
                     note: String(settings.lesserNukeNote || ''),
                     noteLong: String(settings.lesserNukeNoteLong || ''),
-                    deleteMode: 'delete',
-                    deleteDelay: String(settings.lesserNukeDeleteDelay != null
-                        ? settings.lesserNukeDeleteDelay : '0'),
                     deletePost: settings.lesserNukeDeletePost !== false
                 };
             }
@@ -5517,59 +5503,6 @@
                 var noteLong = lesserSmsNote(panel);
                 if (noteLong) noteLong.setAttribute('data-nga-warden-lesser-note-long', '1');
                 return {note: note, noteLong: noteLong};
-            }
-
-            function isOfficialLesserReasonBox(el) {
-                if (!el || el.type !== 'checkbox') return false;
-                if (el.getAttribute('data-nga-warden-lesser-note')) return false;
-                var v = String(el.value || '');
-                if (!v || v === 'on') return false;
-                if (v.indexOf('\u5c06\u88ab\u7981\u6b62\u586b\u5199') >= 0) return false;
-                if (el.hidden) return false;
-                return true;
-            }
-
-            function officialReasonBoxFromEvent(event) {
-                var t = event && event.target;
-                if (!t) return null;
-                if (t.nodeType === 3) t = t.parentElement;
-                if (isOfficialLesserReasonBox(t)) return t;
-                var wrap = t.closest && t.closest('label');
-                var box = wrap && wrap.querySelector('input[type="checkbox"]');
-                return isOfficialLesserReasonBox(box) ? box : null;
-            }
-
-            function clearPrefillIfOfficialReason(panel, box) {
-                if (!box || !box.checked) return;
-                var settings = loadAppSettings() || {};
-                if (settings.lesserClearNoteOnOfficialReason === false) return;
-                var note = lesserThemeNote(panel);
-                if (!note) return;
-                var def = String((effectiveLesserDefaults() || {}).note || '');
-                if (def && note.value === def) note.value = '';
-            }
-
-            function installClearNoteOnOfficialReason(panel) {
-                if (!panel || panel.getAttribute('data-nga-warden-clear-note') === '1') {
-                    return;
-                }
-                panel.setAttribute('data-nga-warden-clear-note', '1');
-                function onPick(event) {
-                    clearPrefillIfOfficialReason(panel, officialReasonBoxFromEvent(event));
-                }
-                panel.addEventListener('change', onPick, true);
-                panel.addEventListener('click', onPick, true);
-            }
-
-            function noteDeleteDelayLimitation() {
-                if (nukeDelayHintLogged) return;
-                var settings = loadAppSettings() || {};
-                var delay = String(settings.lesserNukeDeleteDelay != null
-                    ? settings.lesserNukeDeleteDelay : '0');
-                if (settings.lesserNukeDeletePost && delay !== '0') {
-                    nukeDelayHintLogged = true;
-                    addTreeLogEntry('info', '\u5df2\u4fdd\u5b58\u300c\u5ef6\u65f6\u5220\u9664\u300d\u8bbe\u7f6e\uff0c\u4f46\u5f53\u524d\u5de5\u5177\u4e0d\u652f\u6301\u5ef6\u65f6\u5220\u9664\uff0c\u8be5\u8bbe\u7f6e\u4e0d\u4f1a\u751f\u6548');
-                }
             }
 
             function applyNukeDefaults(panel) {
@@ -5620,14 +5553,11 @@
                         del.checked = deleteOn;
                         del.setAttribute(NUKE_DEFAULTS_MARK, '');
                     }
-                    // \u9650\u5236\uff1a\u53c2\u8003\u5b9e\u73b0\u7684\u300c\u7acb\u523b\u9501\u9690\u5e76\u5ef6\u8fdf\u5220\u9664\u300d(installLesserLayout /
-                    // lock-delay) \u672a\u79fb\u690d\uff1b\u672c\u5de5\u5177\u53ea\u8d1f\u8d23\u9884\u586b\u5b98\u65b9\u5f39\u7a97\uff0c\u4e0d\u53d1\u9001\u4efb\u4f55\u8bf7\u6c42\u3002
-                    noteDeleteDelayLimitation();
+                    // \u672c\u6a21\u5757\u53ea\u8d1f\u8d23\u9884\u586b\u5b98\u65b9\u5f39\u7a97\uff0c\u4e0d\u53d1\u9001\u4efb\u4f55\u8bf7\u6c42\u3002
                     var done = !!(del && scopeInputs.length && daysInputs.length);
                     if (done) {
                         nukeAppliedSeq = nukeOpenSeq;
                         listenNukeUserEdits(panel);
-                        installClearNoteOnOfficialReason(panel);
                         if (nukeReported.get(panel) !== 'success') {
                             nukeReported.set(panel, 'success');
                             addTreeLogEntry('success', '\u5df2\u628a\u6b21\u7ea7NUKE\u9ed8\u8ba4\u503c\u5e94\u7528\u5230\u5f53\u524d\u5f39\u7a97');
