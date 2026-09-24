@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.5
+// @version      1.3.6
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -355,7 +355,6 @@
     // ===================================
     var DEFAULT_APP_SETTINGS = {
         removeLoginBtn: false,   // 删除登录按钮
-        enableHideAll: false,    // 一键锁隐作者按钮
         removeWatermark: false,  // 删除NGA水印
         showVotes: false,        // 查看赞踩比
         showPrivateNotes: false, // 显示非公开备注
@@ -525,126 +524,6 @@
         }, 100);
     }
 
-    // 一键锁隐作者：在每个楼层注入"锁隐all"按钮
-    var _hideAllInjected = false;
-    function injectHideAllButtons() {
-        if (_hideAllInjected) return;
-        // 仅在 read.php 页面且是管理员时注入
-        if (!getCurrentTid()) return;
-        if (!window.__GP || !window.__GP.admincheck) return;
-
-        var postInfos = document.querySelectorAll('.postInfo');
-        if (postInfos.length === 0) return;
-
-        // 取第一个按钮作为模板
-        var templateBtn = postInfos[0].querySelector('.small_colored_text_btn.block_txt_c0.stxt');
-        if (!templateBtn) return;
-
-        var uidElements = document.getElementsByName('uid');
-
-        for (var i = 0; i < postInfos.length; i++) {
-            var pi = postInfos[i];
-            // 跳过评论
-            if (pi.id && pi.id.indexOf('comment') === 0) continue;
-
-            var fp = pi.parentElement.id; // postInfo{N}
-            if (!fp) continue;
-            var fpMatch = fp.match(/\d+$/);
-            if (!fpMatch) continue;
-            var floor = parseInt(fpMatch[0]);
-            var uidIdx = floor % 20;
-            var uid = '';
-            if (uidElements[uidIdx]) {
-                uid = (uidElements[uidIdx].textContent || '').trim();
-            }
-            if (!uid) continue;
-
-            // 克隆按钮
-            var btn = templateBtn.cloneNode(true);
-            btn.innerHTML = '锁隐all';
-            btn.title = '锁隐该用户楼内全部回复';
-            btn.style.marginLeft = '0.5em';
-            btn.href = 'javascript:void(0)';
-            btn.onclick = (function(uidVal, tidVal) {
-                return function(e) {
-                    e.preventDefault();
-                    if (!confirm('将锁隐用户 ' + uidVal + ' 在该楼内的全部回复。是否继续？')) return;
-                    executeHideAll(uidVal, tidVal);
-                };
-            })(uid, getCurrentTid());
-
-            pi.appendChild(btn);
-        }
-        _hideAllInjected = true;
-    }
-
-    // 执行批量锁隐：获取该用户所有PID，批量发送锁隐请求
-    function executeHideAll(authorUid, tid) {
-        var allPids = [];
-        var fid = getCurrentFid();
-
-        function fetchPage(page) {
-            var xhr = new XMLHttpRequest();
-            xhr.open('GET', '/read.php?tid=' + tid + '&authorid=' + authorUid + '&__output=11&page=' + page, true);
-            xhr.timeout = 15000;
-            xhr.onload = function() {
-                if (xhr.status !== 200) { alert('获取回复列表失败'); return; }
-                try {
-                    var resp = JSON.parse(xhr.responseText);
-                    var data = resp.data;
-                    if (!data || !data.__R) { alert('解析回复数据失败'); return; }
-                    for (var i = 0; i < data.__R.length; i++) {
-                        allPids.push(data.__R[i].pid);
-                    }
-                    // 检查是否还有下一页
-                    if (data.__R__ROWS_PAGE && data.__ROWS && data.__R__ROWS_PAGE * page < data.__ROWS) {
-                        fetchPage(page + 1);
-                    } else {
-                        doBatchLockHide(allPids, tid, fid);
-                    }
-                } catch(e) {
-                    alert('解析失败: ' + e.message);
-                }
-            };
-            xhr.onerror = function() { alert('网络请求失败'); };
-            xhr.send();
-        }
-
-        fetchPage(1);
-    }
-
-    // 批量发送锁隐请求
-    function doBatchLockHide(pids, tid, fid) {
-        var total = pids.length;
-        if (total === 0) { alert('未找到该用户的回复'); return; }
-        alert('共找到 ' + total + ' 条回复，操作已加入队列。完成之前请勿刷新页面。');
-
-        var processed = 0, errors = 0;
-
-        function processNext(index) {
-            if (index >= total) {
-                alert('操作完毕！成功' + processed + '条, 失败' + errors + '条。PIDs: ' + pids.join(' '));
-                return;
-            }
-            var pid = pids[index];
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', '/nuke.php', true);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-            xhr.timeout = 15000;
-            xhr.onload = function() {
-                if (xhr.status === 200) {
-                    try { var r = JSON.parse(xhr.responseText); if (!r.error) processed++; else errors++; }
-                    catch(e) { processed++; }
-                } else { errors++; }
-                processNext(index + 1);
-            };
-            xhr.onerror = function() { errors++; processNext(index + 1); };
-            xhr.send('__lib=topic_lock&__act=set&ids=' + encodeURIComponent(tid + ',' + pid) +
-                     '&ton=0&toff=0&pon=1026&poff=0&pm=0&info=&raw=3');
-        }
-
-        processNext(0);
-    }
 
     // ===================================
     // 获取页面参数
@@ -1581,14 +1460,6 @@
                                 '<span style="font-size:11px;color:#8b6914;">开启后移除导航栏中的"登录"按钮</span>' +
                             '</div>' +
                             '<div class="warden-form-row">' +
-                                '<label>一键锁隐作者:</label>' +
-                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
-                                    '<input type="checkbox" id="warden-setting-hideall">' +
-                                    '<span class="kw-slider"></span>' +
-                                '</label>' +
-                                '<span style="font-size:11px;color:#8b6914;">每个楼层添加"锁隐all"按钮，一键锁隐该用户楼内全部回复</span>' +
-                            '</div>' +
-                            '<div class="warden-form-row">' +
                                 '<label>删除NGA水印:</label>' +
                                 '<label class="kw-toggle" style="flex:0 0 auto;">' +
                                     '<input type="checkbox" id="warden-setting-watermark">' +
@@ -1758,7 +1629,6 @@
                         '<div class="warden-section">' +
                             '<h3>操作日志</h3>' +
                             '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-                                '<button class="warden-btn" id="warden-btn-tree-selfcheck" title="检测当前页面能否注入锁隐树入口，结果写入下面的日志">页面自检</button>' +
                                 '<button class="warden-btn" id="warden-btn-tree-log-clear" title="清空日志显示">清除日志</button>' +
                             '</div>' +
                             '<div id="nga-warden-tree-log">' +
@@ -2982,8 +2852,6 @@
             var as = loadAppSettings();
             var removeLoginToggle = document.getElementById('warden-setting-remove-login');
             if (removeLoginToggle) removeLoginToggle.checked = as.removeLoginBtn;
-            var hideAllToggle = document.getElementById('warden-setting-hideall');
-            if (hideAllToggle) hideAllToggle.checked = as.enableHideAll;
             var watermarkToggle = document.getElementById('warden-setting-watermark');
             if (watermarkToggle) watermarkToggle.checked = as.removeWatermark;
             var votesToggle = document.getElementById('warden-setting-votes');
@@ -3043,106 +2911,6 @@
     function clearTreeLog() {
         var logEl = document.getElementById('nga-warden-tree-log');
         if (logEl) logEl.innerHTML = '';
-    }
-
-    // ===================================
-    // 锁隐树：页面自检（真机排障用）
-    // 面板「锁隐树」页点"页面自检"，把检测结果写进日志区，便于截图反馈。
-    // ===================================
-    function treeSelfCheck() {
-        var out = [];
-        function add(s) { out.push(s); addTreeLogEntry('info', s); }
-        function count(sel) {
-            try { return document.querySelectorAll(sel).length; } catch (e) { return -1; }
-        }
-        var tid = getCurrentTid();
-        add('=== 锁隐树自检 ===');
-        add('URL: ' + location.pathname + location.search);
-        add('tid=' + tid + '  fid=' + getCurrentFid() + '  page=' + getCurrentPage());
-        add('触屏(hover:none): ' + !!(window.matchMedia && window.matchMedia('(hover: none)').matches)
-            + '  视口=' + window.innerWidth + 'x' + window.innerHeight);
-        add('-- 数据 --');
-        add('__T: ' + (window.__T ? ('tid=' + window.__T.tid + ' replies=' + window.__T.replies) : '无')
-            + '   __R条数=' + (window.__R ? Object.keys(window.__R).length : 0)
-            + '   __CURRENT_UID=' + window.__CURRENT_UID);
-        var gp = window.__GP;
-        add('__GP: ' + (gp ? ('admincheck=' + gp.admincheck
-            + ' admin=' + !!gp.admin + ' super=' + !!gp.super
-            + ' superlesser=' + !!gp.superlesser) : '无'));
-        add('commonui.postBtn: ' + !!(window.commonui && window.commonui.postBtn)
-            + '  d[41]=' + !!(window.commonui && window.commonui.postBtn
-                && window.commonui.postBtn.d && window.commonui.postBtn.d[41])
-            + '  d[14]=' + !!(window.commonui && window.commonui.postBtn
-                && window.commonui.postBtn.d && window.commonui.postBtn.d[14]));
-        add('-- 权限 --');
-        add('hasWardenPermission(任一楼层)=' + hasWardenPermission(null)
-            + '  officialLesserAllowed=' + officialLesserAllowed(null));
-        add('-- DOM 关键选择器 --');
-        add('[id^="postrow"]=' + count('[id^="postrow"]')
-            + '  [id^="post1strow"]=' + count('[id^="post1strow"]')
-            + '  .postInfo=' + count('.postInfo')
-            + '  [id^="pid"]=' + count('[id^="pid"]')
-            + '  .posterInfoLine=' + count('.posterInfoLine')
-            + '  .postbtnsc=' + count('.postbtnsc'));
-        add('-- 注入结果 --');
-        add('菜单入口已注册=' + (function () {
-            try {
-                var pb = window.commonui && window.commonui.postBtn;
-                return !!(pb && pb.d && pb.d[91]);
-            } catch (e) { return -1; }
-        })() + '  面板已挂=' + !!window.__NGA_WARDEN_MODULES);
-        var rows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
-        var withPid = 0;
-        for (var i = 0; i < rows.length; i++) {
-            if (rows[i].querySelector('[id^="pid"]')) withPid++;
-        }
-        add('楼层容器=' + rows.length + '，其中能定位 pid 的=' + withPid);
-        var moduleState = null;
-        if (TREE_FEATURE && typeof TREE_FEATURE.inspect === 'function') {
-            try {
-                moduleState = TREE_FEATURE.inspect();
-                add('-- 模块内部状态 --');
-                add('installed=' + moduleState.installed
-                    + '  observing=' + moduleState.observing
-                    + '  entryRetry=' + moduleState.entryRetry
-                    + '  treeButtons=' + moduleState.treeButtons);
-                add('postBtn=' + moduleState.postBtn
-                    + '  菜单项[锁隐回复树]=' + moduleState.menuTree
-                    + '  [锁隐作者树]=' + moduleState.menuAuthor
-                    + '  已进"更多→管理"=' + moduleState.inAdminMenu
-                    + '  悬停条已接管=' + moduleState.hoverWrapped);
-                add('楼层参数数=' + moduleState.args
-                    + '  本页有管理权限=' + moduleState.surfaceAllowed
-                    + '  旧版自建入口残留=' + moduleState.legacyEntries);
-            } catch (e) {
-                add('模块自检异常：' + (e && e.message ? e.message : e));
-            }
-        }
-        var settings = loadAppSettings();
-        add('-- 开关 --');
-        add('楼层显示入口=' + settings.treeButtons
-            + '  回复树=' + settings.lockHideReplyTree
-            + '  作者树=' + settings.lockHideAuthor
-            + '  页数上限=' + settings.treeMaxPages
-            + '  NUKE默认值=' + settings.nukeDefaultsOn);
-        add('结论：' + (function () {
-            if (!moduleState) return '模块未挂载 —— 请把整段自检结果发回';
-            if (moduleState.installed !== true) {
-                return '模块没被安装（installed=false）—— 请把整段自检结果发回';
-            }
-            if (moduleState.postBtn !== true) {
-                return 'commonui.postBtn 尚未就绪，入口注册不上 —— 请把整段自检结果发回';
-            }
-            if (moduleState.surfaceAllowed !== true) {
-                return '本页没检测到管理权限，官方按钮系统不会渲染入口 —— 属正常（确认你在这个版面有版主权限）';
-            }
-            if (moduleState.menuTree !== true) {
-                return '入口未注册（菜单项=0）—— 等 1~2 秒再点一次页面自检；仍为 0 请把整段结果发回';
-            }
-            return '一切正常：「锁隐回复树 / 锁隐作者树」应已出现在楼层悬停条的"管理"按钮组、'
-                + '以及"更多 → 管理"菜单里；主楼只显示"锁隐回复树"（在那里锁整帖）';
-        })());
-        return out.join('\n');
     }
 
     // ===================================
@@ -3421,23 +3189,6 @@
         }
 
         // 一键锁隐作者开关
-        var hideAllToggle = document.getElementById('warden-setting-hideall');
-        if (hideAllToggle) {
-            hideAllToggle.checked = loadAppSettings().enableHideAll;
-
-            hideAllToggle.addEventListener('change', function() {
-                var as = loadAppSettings();
-                as.enableHideAll = this.checked;
-                saveAppSettings(as);
-                if (this.checked) {
-                    injectHideAllButtons();
-                    addScoreLogEntry('info', '已开启：一键锁隐作者');
-                } else {
-                    addScoreLogEntry('info', '已关闭：一键锁隐作者，刷新页面后生效');
-                }
-            });
-        }
-
         // 删除NGA水印开关
         var watermarkToggle = document.getElementById('warden-setting-watermark');
         if (watermarkToggle) {
@@ -3553,18 +3304,6 @@
             });
         }
 
-        var treeSelfCheckBtn = document.getElementById('warden-btn-tree-selfcheck');
-        if (treeSelfCheckBtn) {
-            treeSelfCheckBtn.addEventListener('click', function() {
-                try {
-                    treeSelfCheck();
-                } catch (e) {
-                    logError('页面自检异常', e);
-                    addTreeLogEntry('error', '自检异常：' + (e && e.message ? e.message : e));
-                }
-            });
-        }
-
         // ========== 查看本帖举报事件 ==========
 
         var fetchReportsBtn = document.getElementById('warden-btn-fetch-reports');
@@ -3599,7 +3338,6 @@
             // 应用初始设置
             var appSettings = loadAppSettings();
             applyRemoveLoginBtn(appSettings.removeLoginBtn);
-            if (appSettings.enableHideAll) injectHideAllButtons();
             if (appSettings.removeWatermark) applyRemoveWatermark();
             if (appSettings.showVotes) applyShowVotes();
             if (appSettings.showPrivateNotes) applyShowPrivateNotes();
@@ -3673,8 +3411,7 @@
             nukeDefaults: NUKE_DEFAULTS,
             loadSettings: loadAppSettings,
             saveSettings: saveAppSettings,
-            setSetting: setAppSetting,
-            selfCheck: treeSelfCheck
+            setSetting: setAppSetting
         };
     } catch (e) { /* 页面可能禁止写 window */ }
 
@@ -3758,11 +3495,14 @@
             // ============================================================
             var BTN_TREE = 91;
             var BTN_AUTHOR = 92;
+            var BTN_PAGE = 93;
             var BTN_LESSER = 14;
             var LABEL_TREE = '\u9501\u9690\u56DE\u590D\u6811';
             var LABEL_AUTHOR = '\u9501\u9690\u4F5C\u8005\u6811';
+            var LABEL_PAGE = '\u9501\u9690\u672C\u9875';
             var LABEL_TREE_N3 = '.\u9501\u9690.\u56DE\u590D\u6811';
             var LABEL_AUTHOR_N3 = '.\u9501\u9690.\u4F5C\u8005\u6811';
+            var LABEL_PAGE_N3 = '.\u9501\u9690.\u672C\u9875';
             var MAX_GENB_WRAPS = 20;
             var entryWraps = 0;
 
@@ -3897,18 +3637,37 @@
                     } else {
                         delete pb.d[BTN_AUTHOR];
                     }
+                    // \u9501\u9690\u672C\u9875\uff1a\u4E0E\u4F5C\u8005\u6811\u540C\u4E00\u5957\u5B9E\u73B0\u65B9\u5F0F\uff0c
+                    // \u53EA\u662F\u6539\u6210\u626B\u63CF\u5F53\u524D\u9875\u7684\u5168\u90E8\u56DE\u590D\u3002
+                    pb.d[BTN_PAGE] = {
+                        n1: LABEL_PAGE,
+                        n2: '\u9501\u9690\u672C\u9875\u6240\u6709\u56DE\u590D\u697C\u5C42\u3002',
+                        n3: LABEL_PAGE_N3,
+                        init: function (btn) { markBtn(btn, 'page'); },
+                        ck: function (a) {
+                            return !!(surfaceUsable(a) && surfaceAllowed(a));
+                        },
+                        on: function (e, a) {
+                            if (!a || !a.tid) return;
+                            runPageLock(a.tid, btnFromEvent(e));
+                        }
+                    };
                 } else {
                     delete pb.d[BTN_TREE];
                     delete pb.d[BTN_AUTHOR];
+                    delete pb.d[BTN_PAGE];
                 }
 
                 var admin = adminList(pb);
                 if (admin) {
-                    [BTN_TREE, BTN_AUTHOR].forEach(function (id) {
+                    [BTN_TREE, BTN_AUTHOR, BTN_PAGE].forEach(function (id) {
                         var at = admin.indexOf(id);
                         if (at >= 0) admin.splice(at, 1);
                     });
                     if (on && allow) {
+                        // unshift \u4ECE\u540E\u5F80\u524D\u63D2\uff0c\u6240\u4EE5\u987A\u5E8F\u8981\u5012\u7740\u5199\uff1a
+                        // \u6700\u7EC8\u6392\u5217 = \u9501\u9690\u672C\u9875 | \u9501\u9690\u4F5C\u8005\u6811 | \u9501\u9690\u56DE\u590D\u6811
+                        admin.unshift(BTN_PAGE);
                         if (s.lockHideAuthor !== false) admin.unshift(BTN_AUTHOR);
                         admin.unshift(BTN_TREE);
                     }
@@ -3981,8 +3740,12 @@
                     }
 
                     var s = settings_();
-                    put(BTN_TREE, LABEL_TREE);
+                    // Each put() inserts immediately left of 更多, so we call them in
+                    // reverse display order: 锁隐本页 ends up farthest right, next to
+                    // 锁隐作者树.
+                    put(BTN_PAGE, LABEL_PAGE);
                     if (s.lockHideAuthor !== false && !isTopicArg(arg)) put(BTN_AUTHOR, LABEL_AUTHOR);
+                    put(BTN_TREE, LABEL_TREE);
                     return bar;
                 };
                 pb.genB._ngaWdBtns = true;
@@ -4151,10 +3914,11 @@
                 if (pb && pb.d) {
                     delete pb.d[BTN_TREE];
                     delete pb.d[BTN_AUTHOR];
+                    delete pb.d[BTN_PAGE];
                 }
                 var admin = adminList(pb);
                 if (admin) {
-                    [BTN_TREE, BTN_AUTHOR].forEach(function (id) {
+                    [BTN_TREE, BTN_AUTHOR, BTN_PAGE].forEach(function (id) {
                         var at = admin.indexOf(id);
                         if (at >= 0) admin.splice(at, 1);
                     });
@@ -4930,6 +4694,7 @@
                 var kind = btn.getAttribute('data-nga-wd-entry');
                 var id = btn.getAttribute('data-nga-wd-id');
                 if (kind === 'author' || id === '92') btn.textContent = LABEL_AUTHOR;
+                else if (kind === 'page' || id === '93') btn.textContent = LABEL_PAGE;
                 else btn.textContent = LABEL_TREE;
             }
 
@@ -4968,6 +4733,91 @@
                     lastOp = null;
                     addTreeLogEntry('error', String((e && e.message) || e));
                     notify(String((e && e.message) || e), true);
+                }).then(function() {
+                    running = false;
+                    restoreBtn(btn);
+                });
+            }
+
+            // \u9501\u9690\u672C\u9875\uff1a\u626B\u63CF\u5F53\u524D\u9875\u7684\u5168\u90E8\u56DE\u590D\u697C\u5C42\u5E76\u9010\u6761\u9501\u9690\u3002
+            // \u4E0E\u4F5C\u8005\u6811\u8D70\u540C\u4E00\u5957\u6D41\u7A0B\uff08\u6E05\u5355 \u2192 \u9010\u6761 setBits \u2192 \u6D6E\u7A97 + \u53EF\u64A4\u9500\uff09\u3002
+            function currentPagePosts() {
+                var out = [];
+                var seen = {};
+                var rows = document.querySelectorAll('[id^="postrow"], [id^="post1strow"]');
+                for (var i = 0; i < rows.length; i++) {
+                    var info = readRow(rows[i]);
+                    if (!info.pid || info.floor === 0) continue;
+                    if (seen[info.pid]) continue;
+                    seen[info.pid] = 1;
+                    out.push({
+                        pid: info.pid,
+                        lou: info.floor,
+                        author: liveAuthor(info.authorUid) || '',
+                        authorid: info.authorUid || 0,
+                        type: 0
+                    });
+                }
+                out.sort(function (a, b) { return a.lou - b.lou; });
+                return out;
+            }
+
+            function runPageLock(tid, btn) {
+                if (running) return;
+                if (!tid) {
+                    notify('\u6CA1\u6709 tid', true);
+                    return;
+                }
+                var posts = currentPagePosts();
+                if (!posts.length) {
+                    notify('\u5F53\u524D\u9875\u6CA1\u6709\u627E\u5230\u53EF\u9501\u9690\u7684\u56DE\u590D\u697C\u5C42', true);
+                    return;
+                }
+                var todo = posts.filter(function(p) { return !(skipLocked() && postAlreadyLocked(p)); });
+                if (!todo.length) {
+                    notify('\u5F53\u524D\u9875\u7684\u56DE\u590D\u5DF2\u7ECF\u90FD\u662F\u9501\u9690\u72B6\u6001', true);
+                    return;
+                }
+                running = true;
+                if (btn) btn.textContent = '\u9501\u9690\u4E2D';
+                var fails = [];
+                var okList = [];
+                serial(todo, function(p) {
+                    return setBits(tid, p.pid, PON, 0).then(function() {
+                        okList.push(p);
+                    }, function(e) {
+                        fails.push(String((e && e.message) || e));
+                    });
+                }).then(function() {
+                    var page = livePageNumber();
+                    var op = {
+                        tid: tid,
+                        seedPid: okList.length ? okList[0].pid : 0,
+                        authorid: 0,
+                        authorName: '',
+                        startPage: page,
+                        lastPage: page,
+                        threadEnd: liveThreadEnd(),
+                        replies: liveReplies(),
+                        posts: okList.slice(),
+                        wanted: okList.map(function(p) { return p.pid; })
+                    };
+                    lastOp = op;
+                    addTreeLogEntry('success', '\u5DF2\u9501\u9690\u672C\u9875 ' + okList.length + ' \u4E2A\u56DE\u590D');
+                    if (fails.length) {
+                        addTreeLogEntry('error', '\u5931\u8D25 ' + fails.length + ' \u4E2A\uFF1A'
+                            + fails.slice(0, 3).join('\uFF1B'));
+                    }
+                    var lines = ['\u5DF2\u9501\u9690\u672C\u9875 ' + okList.length + ' \u4E2A\u56DE\u590D'
+                        + '\uFF08\u7B2C ' + page + ' \u9875\uFF09'];
+                    okList.slice(0, 3).forEach(function(p) { lines.push(lineOf(p)); });
+                    if (okList.length > 3) lines.push('...');
+                    if (fails.length) lines.push('\u5931\u8D25 ' + fails.length + ' \u4E2A');
+                    var actions = [{ label: '\u786E\u8BA4', onClick: closeToast }];
+                    if (okList.length) {
+                        actions.push({ label: '\u64A4\u9500', onClick: function() { undoLast(); } });
+                    }
+                    notify(lines.join('\n'), !okList.length && fails.length > 0, actions);
                 }).then(function() {
                     running = false;
                     restoreBtn(btn);
@@ -5255,6 +5105,7 @@
                     postBtn: false,
                     menuTree: false,
                     menuAuthor: false,
+                    menuPage: false,
                     inAdminMenu: false,
                     hoverWrapped: false,
                     surfaceAllowed: false,
@@ -5269,6 +5120,7 @@
                 if (pb && pb.d) {
                     out.menuTree = !!pb.d[BTN_TREE];
                     out.menuAuthor = !!pb.d[BTN_AUTHOR];
+                    out.menuPage = !!pb.d[BTN_PAGE];
                     var admin = adminList(pb);
                     out.inAdminMenu = !!(admin && admin.indexOf(BTN_TREE) >= 0);
                     out.hoverWrapped = !!(pb.genB && pb.genB._ngaWdBtns);
