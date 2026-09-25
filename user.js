@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.6
+// @version      1.3.7
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -527,7 +527,7 @@
 
     // ===================================
     // 获取页面参数
-    // ===================================
+    // ===================================f分分
     function getCurrentPage() {
         var page = getUrlParam('page');
         return page ? parseInt(page) : 1;
@@ -3433,7 +3433,7 @@
             var observer = null;
             var debounceTimer = null;
             var poller = null;
-            var entryRetryTimer = null;
+            var watchTimer = null;
             var menuEl = null;
             var menuAnchor = null;
 
@@ -3774,42 +3774,27 @@
                 /* labels are owned by NGA's own renderer now */
             }
 
+            // Idempotent: if the menu is already intact this does NOTHING, so an open
+            // or hovered action bar is never torn down (the reference's menuIntact()
+            // idea). Only a broken menu is rebuilt, and only then are cached hover
+            // bars dropped so a repaired bar appears on the next hover.
             function reparse() {
-                if (!getCurrentTid()) return;
+                if (!getCurrentTid()) return false;
                 var settings = loadSettings();
+                var state = menuState();
                 if (!settings.treeButtons) {
+                    if (state.ok) return true;
                     registerMenuEntries();
-                    return;
+                    return false;
                 }
                 removeLegacyEntries();
+                if (state.ok) return true;
                 var ok = registerMenuEntries();
                 if (ok) {
                     wrapHoverBar();
                     wipeHoverBars();
                 }
-            }
-
-            // NGA builds postBtn in stages; keep trying until our ids are registered.
-            function startEntryRetry() {
-                if (entryRetryTimer) return;
-                var tries = 0;
-                entryRetryTimer = setInterval(function () {
-                    tries++;
-                    if (!loadSettings().treeButtons || tries > 240) {
-                        clearInterval(entryRetryTimer);
-                        entryRetryTimer = null;
-                        return;
-                    }
-                    var pb = postBtnOf();
-                    var ready = pb && pb.d && typeof pb.d === 'object';
-                    if (ready) {
-                        reparse();
-                        if (pb.d[BTN_TREE]) {
-                            clearInterval(entryRetryTimer);
-                            entryRetryTimer = null;
-                        }
-                    }
-                }, 250);
+                return ok;
             }
 
             function scheduleReparse() {
@@ -3826,27 +3811,38 @@
                         || (n.getAttribute && n.getAttribute('data-nga-wd'))));
             }
 
-            function isOwnMutation(m) {
-                if (!m) return true;
-                if (isOwnNode(m.target)) return true;
-                var added = m.addedNodes;
-                if (added && added.length) {
-                    for (var i = 0; i < added.length; i++) {
-                        if (isOwnNode(added[i])) return true;
-                    }
-                }
+            // Only re-act when something the entry depends on actually appeared —
+            // the same idea as the reference's addedWardenSurface(). Reparsing on every
+            // DOM change is what kept rebuilding (and thus clearing) the action bar.
+            var SURFACE_SEL = 'tr.topicrow, #topicrows tr, table.forumbox.postbox,'
+                + ' .forumbox.postbox, .postbtnsc, .posterInfoLine, .native-none-menu,'
+                + ' a[href*="/post.php?action=reply"]';
+
+            function addedWardenSurface(node) {
+                if (!node || node.nodeType !== 1) return false;
+                try {
+                    if (node.matches && node.matches(SURFACE_SEL)) return true;
+                    if (node.querySelector && node.querySelector(SURFACE_SEL)) return true;
+                } catch (err) { /* detached */ }
                 return false;
             }
 
             function handleMutations(mutations) {
-                var external = false;
+                var hit = false;
                 for (var i = 0; i < mutations.length; i++) {
-                    if (!isOwnMutation(mutations[i])) {
-                        external = true;
-                        break;
+                    var m = mutations[i];
+                    if (!m || isOwnNode(m.target)) continue;
+                    var added = m.addedNodes;
+                    if (!added || !added.length) continue;
+                    for (var j = 0; j < added.length; j++) {
+                        if (addedWardenSurface(added[j])) {
+                            hit = true;
+                            break;
+                        }
                     }
+                    if (hit) break;
                 }
-                if (external) scheduleReparse();
+                if (hit) scheduleReparse();
             }
 
             function install() {
@@ -3883,18 +3879,62 @@
                     return;
                 }
                 reparse();
-                startEntryRetry();
+                startWatch();
+            }
+
+            // \u53C2\u8003\u5B9E\u73B0\u7684\u505A\u6CD5\uFF1A\u4E0D\u662F\u56FA\u5B9A\u95F4\u9694\u53CD\u590D\u91CD\u88C5\uFF0C\u800C\u662F\u5148\u7528
+            // menuIntact() \u505A\u4E00\u6B21\u5EC9\u4EF7\u68C0\u67E5\uFF08\u51E0\u4E2A\u5C5E\u6027\u8BFB\u53D6\uFF09\uFF0C
+            // \u5B8C\u597D\u5C31\u4EC0\u4E48\u90FD\u4E0D\u505A\u3002\u91CD\u88C5\u624D\u4F1A\u6E05\u7406\u60AC\u505C\u6761\uFF0C\u5426\u5219\u4F1A\u628A\u6B63\u5728\u60AC\u505C\u7684
+            // \u90A3\u6761 bar \u6BCF 500ms \u62C6\u4E00\u6B21\uFF08\u70B9\u4E0D\u4E0A\uFF09\u3002\u8282\u594F\u4E5F\u4EFF\u7167\u5B83\uFF1A
+            // \u672A\u5C31\u7EEA 250ms \u91CD\u8BD5\uFF0C\u5C31\u7EEA\u540E 2000ms \u624D\u68C0\u4E00\u6B21\u3002
+            var WATCH_IDLE_MS = 2000;
+            var WATCH_BUSY_MS = 250;
+
+            function startWatch() {
+                if (watchTimer) return;
+                (function tick() {
+                    watchTimer = null;
+                    var state = menuState();
+                    if (state.broken) {
+                        reparse();
+                    }
+                    watchTimer = setTimeout(tick, state.ok ? WATCH_IDLE_MS : WATCH_BUSY_MS);
+                })();
+            }
+
+            function stopWatch() {
+                if (watchTimer) {
+                    clearTimeout(watchTimer);
+                    watchTimer = null;
+                }
+            }
+
+            // Cheap health check, modelled on the reference's menuIntact():
+            // are our ids registered, in the 管理 list, and is genB still wrapped?
+            function menuState() {
+                var s = settings_();
+                var wantOn = !!s.treeButtons;
+                var pb = postBtnOf();
+                if (!pb || !pb.d) return { ok: false, broken: false, allow: false };
+                var allow = surfaceAllowed(null) || argsFromPage().some(surfaceAllowed);
+                var admin = adminList(pb);
+                var wantAuthor = wantOn && allow && s.lockHideAuthor !== false;
+                var ok = (wantOn === (!!pb.d[BTN_TREE]))
+                    && (wantOn === (!!pb.d[BTN_PAGE]))
+                    && (wantAuthor === (!!pb.d[BTN_AUTHOR]))
+                    && (entryWraps >= MAX_GENB_WRAPS
+                        || (typeof pb.genB === 'function' && pb.genB._ngaWdBtns));
+                if (admin) {
+                    ok = ok
+                        && ((wantOn && allow) === (admin.indexOf(BTN_TREE) >= 0))
+                        && ((wantOn && allow) === (admin.indexOf(BTN_PAGE) >= 0))
+                        && (wantAuthor === (admin.indexOf(BTN_AUTHOR) >= 0));
+                }
+                return { ok: ok, broken: !ok, allow: allow };
             }
 
             function stopPolling() {
-                if (poller) {
-                    clearInterval(poller);
-                    poller = null;
-                }
-                if (entryRetryTimer) {
-                    clearInterval(entryRetryTimer);
-                    entryRetryTimer = null;
-                }
+                stopWatch();
             }
 
             function stopFeature() {
@@ -4064,9 +4104,16 @@
                 }
             }
 
+            // NGA answers `lite=js` in more than one shape depending on path/version:
+            //   1) window.script_muti_get_var_store = {...};
+            //   2) window.script_muti_get_var_store = {...};   (with a var declaration)
+            //   3) plain JSON body
+            //   4) an HTML error / interstitial page
+            // The old code threw on shapes 3/4 with a confusing message. Now every
+            // shape is recognised, and a failure carries the real reason + a snippet.
             function extractStoreJson(text) {
                 if (!text) return null;
-                var idx = text.indexOf('window.script_muti_get_var_store');
+                var idx = text.indexOf('script_muti_get_var_store');
                 if (idx < 0) return null;
                 var start = text.indexOf('=', idx);
                 if (start < 0) return null;
@@ -4102,7 +4149,7 @@
                             var slice = text.slice(start, i + 1);
                             try {
                                 return JSON.parse(slice);
-                            } catch (_) {
+                            } catch (err) {
                                 return null;
                             }
                         }
@@ -4112,14 +4159,60 @@
                 return null;
             }
 
-            function parseLite(text) {
-                if (!text) throw new Error('lite=js \u6CA1\u6709 script_muti_get_var_store');
+            // Last resort for responses that are not strict JSON (single quotes,
+            // unquoted keys) — the same idea as the reference's `new Function` eval,
+            // but it only ever sees text we already accepted as a script store.
+            function evalStoreText(text) {
+                var idx = text.indexOf('script_muti_get_var_store');
+                if (idx < 0) return null;
+                var start = text.indexOf('=', idx);
+                if (start < 0) return null;
+                start += 1;
+                var end = text.indexOf(';', start);
+                var raw = (end < 0 ? text.slice(start) : text.slice(start, end)).trim();
+                if (!raw) return null;
                 try {
-                    return JSON.parse(text);
-                } catch (_) { /* script store */ }
+                    /* eslint-disable no-new-func */
+                    var fn = new Function('return (' + raw + ')');
+                    var val = fn();
+                    return (val && typeof val === 'object') ? val : null;
+                } catch (err) {
+                    return null;
+                }
+            }
+
+            function describeBody(text) {
+                var t = String(text || '').replace(/\s+/g, ' ').trim();
+                return t ? t.slice(0, 120) : '(empty body)';
+            }
+
+            function looksLikeHtml(text) {
+                var t = String(text || '').trim();
+                if (!t) return false;
+                if (t.charAt(0) === '{' || t.charAt(0) === '[') return false;
+                return /<(?:!doctype|html|head|body|script)\b/i.test(t);
+            }
+
+            function parseLite(text) {
+                if (!text) throw new Error('\u56DE\u590D\u6570\u636E\u4E3A\u7A7A');
+                // 1) plain JSON
+                try {
+                    var direct = JSON.parse(text);
+                    if (direct && typeof direct === 'object') return direct;
+                } catch (_) { /* not plain JSON */ }
+                // 2) script store, strict
                 var parsed = extractStoreJson(text);
-                if (parsed === null) throw new Error('lite=js \u6CA1\u6709 script_muti_get_var_store');
-                return parsed;
+                if (parsed) return parsed;
+                // 3) script store, lenient
+                parsed = evalStoreText(text);
+                if (parsed) return parsed;
+                // 4) nothing worked: say what we actually got
+                if (looksLikeHtml(text)) {
+                    throw new Error('\u9875\u9762\u8FD4\u56DE\u4E86 HTML \u800C\u4E0D\u662F\u56DE\u590D\u6570\u636E'
+                        + '\uFF08\u53EF\u80FD\u672A\u767B\u5F55\u3001\u65E0\u6743\u9650\u6216\u88AB\u9650\u6D41\uFF09\uFF1A'
+                        + describeBody(text));
+                }
+                throw new Error('\u65E0\u6CD5\u89E3\u6790\u56DE\u590D\u6570\u636E\uFF1A' + describeBody(text));
             }
 
             function parseNukeJson(text) {
@@ -4127,16 +4220,56 @@
                 try {
                     return JSON.parse(text);
                 } catch (_) { /* script store */ }
-                return extractStoreJson(text);
+                return extractStoreJson(text) || evalStoreText(text);
+            }
+
+            // Fetch one path that should answer with a script store / JSON.
+            function fetchOne(path, extra) {
+                return fetch(path, {
+                    credentials: 'include',
+                    cache: 'no-store'
+                }).then(function(r) {
+                    if (!r.ok) {
+                        var err = new Error(path + ' HTTP ' + r.status);
+                        err.status = r.status;
+                        throw err;
+                    }
+                    return r.arrayBuffer().then(function(buf) {
+                        var text = decodeNga(buf, r.headers.get('content-type'));
+                        try {
+                            return parseLite(text);
+                        } catch (parseErr) {
+                            parseErr.body = text;
+                            throw parseErr;
+                        }
+                    });
+                });
+            }
+
+            // \u53C2\u8003\u5B9E\u73B0\u53EA\u8BF7\u6C42\u4E00\u79CD\u5F62\u5F0F\uFF08lite=js\uFF09\u3002\u8FD9\u91CC\u591A\u8BD5\u51E0\u79CD
+            // \u7B49\u4EF7\u5199\u6CD5\uFF0C\u56E0\u4E3A NGA \u4E0D\u540C\u7AD9\u70B9/\u7248\u672C\u5BF9 lite \u53C2\u6570\u7684\u5904\u7406\u4E0D\u4E00\u81F4\u3002
+            function liteVariants(path) {
+                var out = [path];
+                if (path.indexOf('lite=js') >= 0) {
+                    out.push(path.replace('lite=js', 'lite=js&__inchst=UTF8'));
+                    out.push(path + '&__output=8');
+                }
+                return out;
             }
 
             function fetchLite(path) {
-                return fetch(path, { credentials: 'include' }).then(function(r) {
-                    if (!r.ok) throw new Error(path + ' HTTP ' + r.status);
-                    return r.arrayBuffer().then(function(buf) {
-                        return parseLite(decodeNga(buf, r.headers.get('content-type')));
+                var variants = liteVariants(path);
+                var lastErr = null;
+                function attempt(i) {
+                    if (i >= variants.length) {
+                        throw lastErr || new Error('\u83B7\u53D6\u56DE\u590D\u6570\u636E\u5931\u8D25');
+                    }
+                    return fetchOne(variants[i], true).catch(function(err) {
+                        lastErr = err;
+                        return attempt(i + 1);
                     });
-                });
+                }
+                return attempt(0);
             }
 
             function fetchPidLou(tid, pid) {
@@ -4392,6 +4525,33 @@
                 return Math.floor(n / PER_PAGE) + 1;
             }
 
+            // Locate the floor the user clicked. `read.php?tid&pid&lite=js` is the
+            // primary source, but it is the fragile one (NGA sometimes answers that
+            // exact URL with an HTML page). When it fails we still know the page we
+            // are on, so fall back to the live page chunk / the current page URL
+            // instead of aborting the whole operation.
+            function anchorFromPage(seedPid) {
+                var chunk = livePageChunk();
+                var seed = null;
+                if (chunk) {
+                    for (var i = 0; i < chunk.posts.length; i++) {
+                        if (chunk.posts[i].pid === seedPid) {
+                            seed = chunk.posts[i];
+                            break;
+                        }
+                    }
+                }
+                var lou = liveFloor(seedPid);
+                if ((lou == null || lou <= 0) && seed) lou = seed.lou;
+                return {
+                    seed: seed,
+                    lou: Number(lou) || 0,
+                    page: pageFromLou(lou),
+                    replies: liveReplies(),
+                    threadEnd: liveThreadEnd()
+                };
+            }
+
             function resolveSeedAnchor(tid, seedPid) {
                 return fetchLite('/read.php?tid=' + tid + '&pid=' + seedPid + '&lite=js')
                     .then(function(store) {
@@ -4423,6 +4583,10 @@
                         }, function() {
                             return finish();
                         });
+                    }, function(err) {
+                        addTreeLogEntry('info', '\u5B9A\u4F4D\u697C\u5C42\u5931\u8D25\uFF0C'
+                            + '\u6539\u7528\u5F53\u524D\u9875\u6570\u636E\uFF1A' + String(err && err.message || err));
+                        return anchorFromPage(seedPid);
                     });
             }
 
@@ -5100,7 +5264,7 @@
                 var out = {
                     installed: installed,
                     observing: !!observer,
-                    entryRetry: !!entryRetryTimer,
+                    watching: !!watchTimer,
                     tid: 0,
                     postBtn: false,
                     menuTree: false,
