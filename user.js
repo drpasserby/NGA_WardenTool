@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.7
+// @version      1.3.8
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -1567,10 +1567,11 @@
                         '</div>' +
                     '</div>' +
                     // ---- 页面4: 锁隐树 ----
+                    // 注意：本区块（版权与致谢）不在 .staging 模块里，重建模块时不要覆盖它。
                     '<div class="warden-page" data-page="4">' +
                         '<div class="warden-section">' +
                             '<h3>版权与致谢</h3>' +
-                            '<p>本页功能（锁隐回复树 / 锁隐作者树 / 锁隐本页）移植自 <b>NGA Warden Utils</b>，原脚本作者：'
+                                                        '<p>本页功能（锁隐回复树 / 锁隐作者树 / 锁隐本页）移植自 <b>NGA Warden Utils</b>，原脚本作者：'
                                 + '<a href="https://greasyfork.org/users/73441-watereast" target="_blank" rel="noopener">WaterEast</a>。</p>' +
                             '<p>感谢鸭的代码。</p>' +
                             '<p style="color:#c0392b;">本页仅为<b>优化使用</b>而做的精简移植；'
