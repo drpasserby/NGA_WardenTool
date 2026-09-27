@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.8
+// @version      1.3.9
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -4105,81 +4105,171 @@
                 }
             }
 
-            // NGA answers `lite=js` in more than one shape depending on path/version:
+            // ============================================================
+            // Response decoding / parsing
+            //
+            // Real NGA answers `read.php?...&lite=js` in several shapes, and the shape
+            // can differ per request:
             //   1) window.script_muti_get_var_store = {...};
-            //   2) window.script_muti_get_var_store = {...};   (with a var declaration)
-            //   3) plain JSON body
-            //   4) an HTML error / interstitial page
-            // The old code threw on shapes 3/4 with a confusing message. Now every
-            // shape is recognised, and a failure carries the real reason + a snippet.
-            function extractStoreJson(text) {
-                if (!text) return null;
-                var idx = text.indexOf('script_muti_get_var_store');
-                if (idx < 0) return null;
-                var start = text.indexOf('=', idx);
-                if (start < 0) return null;
-                start += 1;
-                while (start < text.length && /\s/.test(text.charAt(start))) start++;
-                if (text.charAt(start) !== '{') return null;
-                var depth = 0;
+            //   2) plain JSON:  {"data":{"__CU":{...},"__GLOBAL":{...},"__T":{...},"__R":{...}}}
+            //   3) the same JSON wrapped in a callback / with a trailing marker
+            //   4) HTML (login page / rate limited / interstitial)
+            // The previous version only handled (1) and (4); a plain JSON body that did
+            // not start with `{` at offset 0, or a script store without the exact
+            // variable name, fell through to "无法解析回复数据".
+            // ============================================================
+
+            // Split a string into a "structural" copy: string/regex contents blanked out.
+            // Used by the scanners so braces inside strings never confuse the depth count.
+            function structural(text) {
+                var out = '';
                 var inString = false;
                 var quoteChar = '';
                 var escaped = false;
-                for (var i = start; i < text.length; i++) {
+                for (var i = 0; i < text.length; i++) {
                     var ch = text.charAt(i);
                     if (inString) {
-                        if (escaped) {
-                            escaped = false;
-                        } else if (ch === '\\') {
-                            escaped = true;
-                        } else if (ch === quoteChar) {
-                            inString = false;
-                        }
+                        if (escaped) { escaped = false; out += 'x'; continue; }
+                        if (ch === '\\') { escaped = true; out += 'x'; continue; }
+                        if (ch === quoteChar) { inString = false; out += '"'; continue; }
+                        out += 'x';
                         continue;
                     }
-                    if (ch === '"' || ch === "'") {
-                        inString = true;
-                        quoteChar = ch;
-                        continue;
-                    }
-                    if (ch === '{') {
-                        depth++;
-                    } else if (ch === '}') {
-                        depth--;
-                        if (depth === 0) {
-                            var slice = text.slice(start, i + 1);
-                            try {
-                                return JSON.parse(slice);
-                            } catch (err) {
-                                return null;
-                            }
+                    if (ch === '"' || ch === "'") { inString = true; quoteChar = ch; out += '"'; continue; }
+                    out += ch;
+                }
+                return out;
+            }
+
+            // Extract the LARGEST balanced {...} / [...] in the body.
+            //
+            // "Largest", not "first": a body may be preceded by noise that itself
+            // contains braces (e.g. `var g = {}; window.store = {real payload}`), and
+            // picking the first balanced block then grabs `{}` and the parse fails.
+            // The payload is always the biggest object in these responses.
+            function extractBalanced(text, from) {
+                if (!text) return null;
+                var sk = structural(text);
+                var start = from || 0;
+                var best = null;
+                var i = start;
+                while (i < sk.length) {
+                    var open = sk.charAt(i);
+                    if (open !== '{' && open !== '[') { i++; continue; }
+                    var close = open === '{' ? '}' : ']';
+                    var depth = 0;
+                    var end = -1;
+                    for (var j = i; j < sk.length; j++) {
+                        var ch = sk.charAt(j);
+                        if (ch === open) depth++;
+                        else if (ch === close) {
+                            depth--;
+                            if (depth === 0) { end = j; break; }
                         }
-                        if (depth < 0) return null;
                     }
+                    if (end > i) {
+                        var slice = text.slice(i, end + 1);
+                        if (!best || slice.length > best.length) best = slice;
+                        i = end + 1;
+                    } else {
+                        // unbalanced from here (truncated response): close what we have
+                        var trimmed = text.slice(i).replace(/[,\s]+$/, '');
+                        var opens = 0;
+                        var brackets = 0;
+                        var tail = structural(trimmed);
+                        for (var k = 0; k < tail.length; k++) {
+                            var tc = tail.charAt(k);
+                            if (tc === '{') opens++;
+                            else if (tc === '}') opens--;
+                            else if (tc === '[') brackets++;
+                            else if (tc === ']') brackets--;
+                        }
+                        if (opens > 0 || brackets > 0) {
+                            var pad = '';
+                            for (var b = 0; b < Math.max(0, brackets); b++) pad += ']';
+                            for (var c = 0; c < Math.max(0, opens); c++) pad += '}';
+                            slice = trimmed + pad;
+                            if (!best || slice.length > best.length) best = slice;
+                        }
+                        break;
+                    }
+                }
+                return best;
+            }
+
+            // Try to JSON.parse every plausible candidate inside the body.
+            function jsonCandidates(text) {
+                var out = [];
+                var body = String(text).replace(/^\uFEFF/, '');
+                out.push(body.trim());
+                // the balanced object/array anywhere in the body
+                var bal = extractBalanced(body, 0);
+                if (bal) out.push(bal);
+                return out;
+            }
+
+            function tryJson(text) {
+                var cands = jsonCandidates(text);
+                for (var i = 0; i < cands.length; i++) {
+                    var c = cands[i];
+                    if (!c) continue;
+                    // exact
+                    try {
+                        var v = JSON.parse(c);
+                        if (v && typeof v === 'object') return v;
+                    } catch (_) { /* next */ }
+                    // tolerate a trailing comma / stray marker before the closing brace
+                    var fixed = c
+                        .replace(/,\s*([}\]])/g, '$1')
+                        .replace(/;\s*$/, '');
+                    if (fixed !== c) {
+                        try {
+                            var v2 = JSON.parse(fixed);
+                            if (v2 && typeof v2 === 'object') return v2;
+                        } catch (_) { /* next */ }
+                    }
+                    // NGA sometimes double-encodes: the JSON itself is a quoted string
+                    try {
+                        var unwrapped = JSON.parse(String(c));
+                        if (typeof unwrapped === 'string') {
+                            var v3 = JSON.parse(unwrapped);
+                            if (v3 && typeof v3 === 'object') return v3;
+                        }
+                    } catch (_) { /* next */ }
                 }
                 return null;
             }
 
-            // Last resort for responses that are not strict JSON (single quotes,
-            // unquoted keys) — the same idea as the reference's `new Function` eval,
-            // but it only ever sees text we already accepted as a script store.
-            function evalStoreText(text) {
-                var idx = text.indexOf('script_muti_get_var_store');
-                if (idx < 0) return null;
-                var start = text.indexOf('=', idx);
-                if (start < 0) return null;
-                start += 1;
-                var end = text.indexOf(';', start);
-                var raw = (end < 0 ? text.slice(start) : text.slice(start, end)).trim();
-                if (!raw) return null;
-                try {
-                    /* eslint-disable no-new-func */
-                    var fn = new Function('return (' + raw + ')');
-                    var val = fn();
-                    return (val && typeof val === 'object') ? val : null;
-                } catch (err) {
-                    return null;
+            // Lenient fallback: evaluate a JS object literal (single quotes, unquoted
+            // keys) or a `name = {...}` assignment. Only used when JSON parsing failed.
+            function evalObjectText(text) {
+                if (!text) return null;
+                var body = String(text).replace(/^\uFEFF/, '');
+                var cands = [];
+                var bal = extractBalanced(body, 0);
+                if (bal) cands.push(bal);
+                cands.push(body.trim());
+                for (var i = 0; i < cands.length; i++) {
+                    var c = cands[i];
+                    if (!c) continue;
+                    try {
+                        /* eslint-disable no-new-func */
+                        var val = new Function('return (' + c + ')')();
+                        if (val && typeof val === 'object') return val;
+                    } catch (_) { /* next */ }
                 }
+                return null;
+            }
+
+            // ---- keep the old names working (other code / tests reference them) ----
+            function extractStoreJson(text) {
+                return tryJson(String(text).indexOf('script_muti_get_var_store') >= 0
+                    ? String(text)
+                    : 'window.script_muti_get_var_store = ' + (extractBalanced(text, 0) || '{}'));
+            }
+
+            function evalStoreText(text) {
+                return evalObjectText(text);
             }
 
             function describeBody(text) {
@@ -4194,19 +4284,25 @@
                 return /<(?:!doctype|html|head|body|script)\b/i.test(t);
             }
 
+            // Accept anything that looks like NGA's post payload, not just `{data:...}`.
+            function looksLikeStore(v) {
+                if (!v || typeof v !== 'object') return false;
+                var d = v.data && typeof v.data === 'object' ? v.data : v;
+                return !!(d.__R || d.__T || d.__U || d.__GLOBAL || d.__CU || d.__PAGE);
+            }
+
             function parseLite(text) {
                 if (!text) throw new Error('\u56DE\u590D\u6570\u636E\u4E3A\u7A7A');
-                // 1) plain JSON
-                try {
-                    var direct = JSON.parse(text);
-                    if (direct && typeof direct === 'object') return direct;
-                } catch (_) { /* not plain JSON */ }
-                // 2) script store, strict
-                var parsed = extractStoreJson(text);
-                if (parsed) return parsed;
-                // 3) script store, lenient
-                parsed = evalStoreText(text);
-                if (parsed) return parsed;
+                // 1) JSON (plain / embedded / with trailing junk)
+                var v = tryJson(text);
+                if (v && looksLikeStore(v)) return v;
+                // 2) JS object literal (single quotes / unquoted keys)
+                v = evalObjectText(text);
+                if (v && looksLikeStore(v)) return v;
+                // 3) JSON parsed but not a store we recognise — still usable if it
+                //    carries __R somewhere (return it, the caller reads .data.__R)
+                var loose = tryJson(text);
+                if (loose) return loose;
                 // 4) nothing worked: say what we actually got
                 if (looksLikeHtml(text)) {
                     throw new Error('\u9875\u9762\u8FD4\u56DE\u4E86 HTML \u800C\u4E0D\u662F\u56DE\u590D\u6570\u636E'
@@ -4218,14 +4314,15 @@
 
             function parseNukeJson(text) {
                 if (!text) return null;
-                try {
-                    return JSON.parse(text);
-                } catch (_) { /* script store */ }
-                return extractStoreJson(text) || evalStoreText(text);
+                var v = tryJson(text);
+                if (v) return v;
+                return evalObjectText(text);
             }
 
             // Fetch one path that should answer with a script store / JSON.
-            function fetchOne(path, extra) {
+            // A parse failure is retried with a different decode (NGA serves GBK on
+            // some hosts, UTF-8 on others) before the variant is given up on.
+            function fetchOne(path) {
                 return fetch(path, {
                     credentials: 'include',
                     cache: 'no-store'
@@ -4236,13 +4333,23 @@
                         throw err;
                     }
                     return r.arrayBuffer().then(function(buf) {
-                        var text = decodeNga(buf, r.headers.get('content-type'));
+                        var ctype = r.headers.get('content-type');
+                        var texts = [decodeNga(buf, ctype)];
+                        // second opinion: force GB18030 when the declared type was utf-8
                         try {
-                            return parseLite(text);
-                        } catch (parseErr) {
-                            parseErr.body = text;
-                            throw parseErr;
+                            var alt = new TextDecoder('gb18030').decode(buf);
+                            if (alt !== texts[0]) texts.push(alt);
+                        } catch (_) { /* no gb18030 support */ }
+                        var lastErr = null;
+                        for (var i = 0; i < texts.length; i++) {
+                            try {
+                                return parseLite(texts[i]);
+                            } catch (parseErr) {
+                                lastErr = parseErr;
+                                lastErr.body = texts[i];
+                            }
                         }
+                        throw lastErr || new Error('\u65E0\u6CD5\u89E3\u6790\u56DE\u590D\u6570\u636E');
                     });
                 });
             }
@@ -4265,7 +4372,7 @@
                     if (i >= variants.length) {
                         throw lastErr || new Error('\u83B7\u53D6\u56DE\u590D\u6570\u636E\u5931\u8D25');
                     }
-                    return fetchOne(variants[i], true).catch(function(err) {
+                    return fetchOne(variants[i]).catch(function(err) {
                         lastErr = err;
                         return attempt(i + 1);
                     });
