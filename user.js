@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.3.9
+// @version      1.4.0
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -172,6 +172,25 @@
         'a.nga-wd-tree-btn:hover{background:rgba(139,33,120,.18)!important;color:#6d1a5e!important}',
         'a.nga-wd-tree-btn.nga-wd-busy{opacity:.55!important;cursor:default!important}',
         '@media (hover:none),(pointer:coarse){a.nga-wd-tree-btn{padding:6px 10px!important;font-size:14px!important}}',
+
+        // ---- 特殊功能按钮高亮配色 ----
+        // 只作用于我们自己注册的三个入口（data-nga-wd-hl 由模块在 markBtn 里打上），
+        // 加上 !important 以顶掉 NGA 对楼层内 <a> 的全局配色；三种按钮用不同色相区分。
+        '[data-nga-wd-hl]{font-weight:700!important}',
+        '[data-nga-wd-hl="tree"]{color:#7a3d00!important;',
+        'background:linear-gradient(#fff3d6,#ffe4ad)!important;',
+        'border:1px solid #d99a2b!important;border-radius:3px!important}',
+        '[data-nga-wd-hl="tree"]:hover{background:linear-gradient(#ffe9bb,#ffd88a)!important;color:#5d2e00!important}',
+        '[data-nga-wd-hl="author"]{color:#0d4f6b!important;',
+        'background:linear-gradient(#e3f6ff,#c3e9fb)!important;',
+        'border:1px solid #4aa3c7!important;border-radius:3px!important}',
+        '[data-nga-wd-hl="author"]:hover{background:linear-gradient(#d2f0ff,#a9ddf5)!important;color:#093a50!important}',
+        '[data-nga-wd-hl="page"]{color:#6a2a00!important;',
+        'background:linear-gradient(#fdece0,#f9d3b4)!important;',
+        'border:1px solid #d97b3c!important;border-radius:3px!important}',
+        '[data-nga-wd-hl="page"]:hover{background:linear-gradient(#fbe1cd,#f5c39a)!important;color:#532000!important}',
+        // 触屏没有 hover，靠底色区分即可；撑大点击区
+        '@media (hover:none),(pointer:coarse){[data-nga-wd-hl]{padding:6px 10px!important;font-size:14px!important}}',
 
         // ---- 锁隐树菜单 ----
         '#nga-wd-tree-menu{position:absolute;z-index:2147483646;min-width:11em;max-width:min(86vw,17em);',
@@ -363,6 +382,8 @@
         treeButtons: true,             // 在楼层操作栏注入"锁隐树"入口
         lockHideReplyTree: true,       // 允许使用"锁隐回复树"
         lockHideAuthor: true,          // 允许使用"锁隐作者树"
+        lockHidePage: true,            // 允许使用"锁隐页"（锁隐本页所有回复）
+        treeButtonHighlight: true,     // 对三个特殊功能按钮启用高亮配色
         treeMaxPages: 10,              // 单次向后/向前检索页数上限(1-10)
         treeSkipLocked: true,          // 跳过已经是锁隐状态的楼层
         nukeDefaultsOn: true,          // 次级NUKE默认值总开关
@@ -1570,8 +1591,7 @@
                     // 注意：本区块（版权与致谢）不在 .staging 模块里，重建模块时不要覆盖它。
                     '<div class="warden-page" data-page="4">' +
                         '<div class="warden-section">' +
-                            '<h3>版权与致谢</h3>' +
-                                                        '<p>本页功能（锁隐回复树 / 锁隐作者树 / 锁隐本页）移植自 <b>NGA Warden Utils</b>，原脚本作者：'
+                            '<h3>版权与致谢</h3>' + '<p>本页功能中的锁隐回复树 / 锁隐作者树（锁隐本页不是）移植自 <b>NGA Warden Utils</b>，原脚本作者：'
                                 + '<a href="https://greasyfork.org/users/73441-watereast" target="_blank" rel="noopener">WaterEast</a>。</p>' +
                             '<p>感谢鸭的代码。</p>' +
                             '<p style="color:#c0392b;">本页仅为<b>优化使用</b>而做的精简移植；'
@@ -1582,6 +1602,7 @@
                             '<p>在帖子页（<b>read.php</b>）的楼层操作栏会出现 <b>锁隐树</b> 入口，点击后可选择：</p>' +
                             '<p>· <b>锁隐回复树</b>：锁隐该楼，以及引用/回复了该楼的后续楼层（递归展开引用链）。</p>' +
                             '<p>· <b>锁隐作者树</b>：锁隐该作者在本帖的发言，以及引用这些发言的楼层。只扫当前的"前一页～后一页"窗口，窗口没盖住首/末页时可在结果浮窗里点"整帖扫描"。</p>' +
+                            '<p>· <b>锁隐页</b>：锁隐<b>当前这一页</b>的所有回复楼层（不含主楼）。不翻页、不展开引用链，只处理屏幕上已经加载出来的层；其他页要在那一页再点一次。已锁隐的楼层会自动跳过（可在高级设置里关闭跳过）。</p>' +
                             '<p style="color:#c0392b;" id="warden-tree-perm-hint">需要版主/管理权限：检测中…</p>' +
                         '</div>' +
                         '<div class="warden-section">' +
@@ -1609,6 +1630,22 @@
                                     '<span class="kw-slider"></span>' +
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">入口菜单中的"锁隐作者树"是否可用（主楼不显示此项）</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>启用锁隐页:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-tree-setting="lockHidePage">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">入口菜单中的"锁隐页"是否可用（锁隐当前页所有回复楼层，不含主楼）</span>' +
+                            '</div>' +
+                            '<div class="warden-form-row">' +
+                                '<label>特殊功能按钮高亮配色:</label>' +
+                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
+                                    '<input type="checkbox" data-tree-setting="treeButtonHighlight">' +
+                                    '<span class="kw-slider"></span>' +
+                                '</label>' +
+                                '<span style="font-size:11px;color:#8b6914;">给"锁隐回复树 / 锁隐作者树 / 锁隐页"三个按钮加上醒目的底色，便于在楼层操作栏里一眼找到</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="warden-section">' +
@@ -3586,7 +3623,39 @@
             function markBtn(btn, kind) {
                 if (!btn) return btn;
                 btn.setAttribute('data-nga-wd-entry', kind);
+                try {
+                    if (settings_().treeButtonHighlight === false) {
+                        btn.removeAttribute('data-nga-wd-hl');
+                    } else {
+                        btn.setAttribute('data-nga-wd-hl', kind);
+                    }
+                } catch (err) { /* non-DOM button in tests */ }
                 return btn;
+            }
+
+            // Strip / restore the highlight on already-rendered controls (toggle path).
+            function applyHighlightSetting(on) {
+                var nodes;
+                try {
+                    // simple selector on purpose: every control we generate carries
+                    // data-nga-wd-entry, and :not()/attribute-combo selectors are the
+                    // kind of thing that behaves differently across engines.
+                    nodes = document.querySelectorAll('[data-nga-wd-entry]');
+                } catch (err) {
+                    return 0;
+                }
+                var n = 0;
+                for (var i = 0; i < nodes.length; i++) {
+                    var el = nodes[i];
+                    var kind = el.getAttribute('data-nga-wd-entry');
+                    if (on) {
+                        el.setAttribute('data-nga-wd-hl', kind || 'tree');
+                    } else {
+                        el.removeAttribute('data-nga-wd-hl');
+                    }
+                    n++;
+                }
+                return n;
             }
 
             function btnFromEvent(e) {
@@ -3638,21 +3707,25 @@
                     } else {
                         delete pb.d[BTN_AUTHOR];
                     }
-                    // \u9501\u9690\u672C\u9875\uff1a\u4E0E\u4F5C\u8005\u6811\u540C\u4E00\u5957\u5B9E\u73B0\u65B9\u5F0F\uff0c
-                    // \u53EA\u662F\u6539\u6210\u626B\u63CF\u5F53\u524D\u9875\u7684\u5168\u90E8\u56DE\u590D\u3002
-                    pb.d[BTN_PAGE] = {
-                        n1: LABEL_PAGE,
-                        n2: '\u9501\u9690\u672C\u9875\u6240\u6709\u56DE\u590D\u697C\u5C42\u3002',
-                        n3: LABEL_PAGE_N3,
-                        init: function (btn) { markBtn(btn, 'page'); },
-                        ck: function (a) {
-                            return !!(surfaceUsable(a) && surfaceAllowed(a));
-                        },
-                        on: function (e, a) {
-                            if (!a || !a.tid) return;
-                            runPageLock(a.tid, btnFromEvent(e));
-                        }
-                    };
+                    // \u9501\u9690\u672C\u9875\uff08\u83dc\u5355\u91cc\u53eb\u201c\u9501\u9690\u9875\u201d\uff09\uff1a\u4E0E\u4F5C\u8005\u6811\u540C\u4E00\u5957\u5B9E\u73B0\u65B9\u5F0F\uff0c
+                    // \u53EA\u662F\u6539\u6210\u626B\u63CF\u5F53\u524D\u9875\u7684\u5168\u90E8\u56DE\u590D\u3002\u53EF\u5355\u72EC\u5173\u95ED\u3002
+                    if (s.lockHidePage !== false) {
+                        pb.d[BTN_PAGE] = {
+                            n1: LABEL_PAGE,
+                            n2: '\u9501\u9690\u672C\u9875\u6240\u6709\u56DE\u590D\u697C\u5C42\u3002',
+                            n3: LABEL_PAGE_N3,
+                            init: function (btn) { markBtn(btn, 'page'); },
+                            ck: function (a) {
+                                return !!(surfaceUsable(a) && surfaceAllowed(a));
+                            },
+                            on: function (e, a) {
+                                if (!a || !a.tid) return;
+                                runPageLock(a.tid, btnFromEvent(e));
+                            }
+                        };
+                    } else {
+                        delete pb.d[BTN_PAGE];
+                    }
                 } else {
                     delete pb.d[BTN_TREE];
                     delete pb.d[BTN_AUTHOR];
@@ -3667,8 +3740,8 @@
                     });
                     if (on && allow) {
                         // unshift \u4ECE\u540E\u5F80\u524D\u63D2\uff0c\u6240\u4EE5\u987A\u5E8F\u8981\u5012\u7740\u5199\uff1a
-                        // \u6700\u7EC8\u6392\u5217 = \u9501\u9690\u672C\u9875 | \u9501\u9690\u4F5C\u8005\u6811 | \u9501\u9690\u56DE\u590D\u6811
-                        admin.unshift(BTN_PAGE);
+                        // \u6700\u7EC8\u6392\u5217 = \u9501\u9690\u9875 | \u9501\u9690\u4F5C\u8005\u6811 | \u9501\u9690\u56DE\u590D\u6811
+                        if (s.lockHidePage !== false) admin.unshift(BTN_PAGE);
                         if (s.lockHideAuthor !== false) admin.unshift(BTN_AUTHOR);
                         admin.unshift(BTN_TREE);
                     }
@@ -3742,9 +3815,9 @@
 
                     var s = settings_();
                     // Each put() inserts immediately left of 更多, so we call them in
-                    // reverse display order: 锁隐本页 ends up farthest right, next to
+                    // reverse display order: 锁隐页 ends up farthest right, next to
                     // 锁隐作者树.
-                    put(BTN_PAGE, LABEL_PAGE);
+                    if (s.lockHidePage !== false) put(BTN_PAGE, LABEL_PAGE);
                     if (s.lockHideAuthor !== false && !isTopicArg(arg)) put(BTN_AUTHOR, LABEL_AUTHOR);
                     put(BTN_TREE, LABEL_TREE);
                     return bar;
@@ -3876,9 +3949,11 @@
                 var settings = loadSettings();
                 observeDocument();
                 if (!settings.treeButtons) {
+                    applyHighlightSetting(false);
                     registerMenuEntries();
                     return;
                 }
+                applyHighlightSetting(settings.treeButtonHighlight !== false);
                 reparse();
                 startWatch();
             }
@@ -3920,15 +3995,16 @@
                 var allow = surfaceAllowed(null) || argsFromPage().some(surfaceAllowed);
                 var admin = adminList(pb);
                 var wantAuthor = wantOn && allow && s.lockHideAuthor !== false;
+                var wantPage = wantOn && allow && s.lockHidePage !== false;
                 var ok = (wantOn === (!!pb.d[BTN_TREE]))
-                    && (wantOn === (!!pb.d[BTN_PAGE]))
+                    && (wantPage === (!!pb.d[BTN_PAGE]))
                     && (wantAuthor === (!!pb.d[BTN_AUTHOR]))
                     && (entryWraps >= MAX_GENB_WRAPS
                         || (typeof pb.genB === 'function' && pb.genB._ngaWdBtns));
                 if (admin) {
                     ok = ok
                         && ((wantOn && allow) === (admin.indexOf(BTN_TREE) >= 0))
-                        && ((wantOn && allow) === (admin.indexOf(BTN_PAGE) >= 0))
+                        && (wantPage === (admin.indexOf(BTN_PAGE) >= 0))
                         && (wantAuthor === (admin.indexOf(BTN_AUTHOR) >= 0));
                 }
                 return { ok: ok, broken: !ok, allow: allow };
@@ -3978,8 +4054,15 @@
                     return;
                 }
                 if (key === 'lockHideReplyTree' || key === 'lockHideAuthor'
+                    || key === 'lockHidePage'
                     || key === 'treeMaxPages' || key === 'treeSkipLocked') {
                     scheduleReparse();
+                    return;
+                }
+                // Highlight is purely cosmetic — flip it on the live controls rather
+                // than rebuilding the menu (a rebuild drops cached hover bars).
+                if (key === 'treeButtonHighlight') {
+                    applyHighlightSetting(loadSettings().treeButtonHighlight !== false);
                 }
             }
 
