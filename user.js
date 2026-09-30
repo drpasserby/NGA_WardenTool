@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.4.0
+// @version      1.4.1
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -157,26 +157,33 @@
         '#nga-warden-tree-log .log-line.error{color:#c0392b}',
         '#nga-warden-tree-log .log-line.info{color:#1a5276}',
 
-        // ---- 楼层上的"锁隐树"入口按钮 ----
-        // NGA 有不少针对楼层内 <a> 的全局规则（配色/字号/换行/溢出），这里用 !important
-        // 全部顶掉，否则按钮可能"存在但看不见"。触屏下额外放大点击区域。
-        'a.nga-wd-tree-btn{display:inline-block!important;visibility:visible!important;opacity:1!important;',
-        'margin:0 0 0 .5em!important;padding:2px 7px!important;cursor:pointer!important;',
-        'color:#8b2178!important;background:rgba(139,33,120,.09)!important;',
-        'border:1px solid rgba(139,33,120,.38)!important;border-radius:3px!important;',
-        'font:700 12px/1.5 "Microsoft YaHei",sans-serif!important;',
-        'text-decoration:none!important;white-space:nowrap!important;vertical-align:middle!important;',
+        // ---- 楼层操作栏里的三个"锁隐"入口按钮 ----
+        // 这些按钮不是我们自己建的元素，而是 NGA 官方 postBtn 生成的 <a>，
+        // 与"引用/编辑/更多"并排。所以这里**不复刻尺寸**：字号、行高、内边距
+        // 全部 inherit，让它们和同排的原生按钮完全一致。
+        //
+        // 踩过的坑：之前给每个按钮都写死 padding/font-size，还在触屏媒体查询里
+        // 加大到 6px/14px，结果手机端（不同浏览器的 font boosting / 系统字号缩放）
+        // 高度与旁边按钮对不齐——有的浏览器还会把内容撑高但行高不变，视觉上错位。
+        // 现在只保证盒模型与相邻单元格一致，尺寸交给宿主页面。
+        '[data-nga-wd-entry]{display:inline-block!important;visibility:visible!important;opacity:1!important;',
+        'vertical-align:middle!important;box-sizing:border-box!important;',
+        'margin:0 0 0 .5em!important;padding:0!important;',
+        'font:inherit!important;line-height:normal!important;',
+        'white-space:nowrap!important;text-decoration:none!important;',
         'position:static!important;float:none!important;max-width:none!important;min-width:0!important;',
-        'width:auto!important;height:auto!important;line-height:1.5!important;letter-spacing:normal!important;',
-        'text-indent:0!important;overflow:visible!important;text-transform:none!important}',
-        'a.nga-wd-tree-btn:hover{background:rgba(139,33,120,.18)!important;color:#6d1a5e!important}',
-        'a.nga-wd-tree-btn.nga-wd-busy{opacity:.55!important;cursor:default!important}',
-        '@media (hover:none),(pointer:coarse){a.nga-wd-tree-btn{padding:6px 10px!important;font-size:14px!important}}',
+        'width:auto!important;height:auto!important;max-height:none!important;min-height:0!important;',
+        'letter-spacing:normal!important;text-indent:0!important;overflow:visible!important;',
+        'text-transform:none!important;cursor:pointer!important}',
+        // 运行中（点过之后）的状态
+        '[data-nga-wd-entry].nga-wd-busy{opacity:.55!important;cursor:default!important}',
+        // 注意：这里**刻意不再有**任何 font-size / padding 的媒体查询覆盖。
+        // 手机端要与同排按钮等高，唯一可靠的办法就是完全不干预尺寸。
 
         // ---- 特殊功能按钮高亮配色 ----
-        // 只作用于我们自己注册的三个入口（data-nga-wd-hl 由模块在 markBtn 里打上），
-        // 加上 !important 以顶掉 NGA 对楼层内 <a> 的全局配色；三种按钮用不同色相区分。
-        '[data-nga-wd-hl]{font-weight:700!important}',
+        // 只改配色，不碰尺寸（尺寸由上面那条基础规则统一 inherit）。
+        // 三种按钮用不同色相区分：回复树=暖黄、作者树=冷蓝、锁隐页=橙棕。
+        '[data-nga-wd-entry][data-nga-wd-hl]{font-weight:700!important}',
         '[data-nga-wd-hl="tree"]{color:#7a3d00!important;',
         'background:linear-gradient(#fff3d6,#ffe4ad)!important;',
         'border:1px solid #d99a2b!important;border-radius:3px!important}',
@@ -189,8 +196,6 @@
         'background:linear-gradient(#fdece0,#f9d3b4)!important;',
         'border:1px solid #d97b3c!important;border-radius:3px!important}',
         '[data-nga-wd-hl="page"]:hover{background:linear-gradient(#fbe1cd,#f5c39a)!important;color:#532000!important}',
-        // 触屏没有 hover，靠底色区分即可；撑大点击区
-        '@media (hover:none),(pointer:coarse){[data-nga-wd-hl]{padding:6px 10px!important;font-size:14px!important}}',
 
         // ---- 锁隐树菜单 ----
         '#nga-wd-tree-menu{position:absolute;z-index:2147483646;min-width:11em;max-width:min(86vw,17em);',
@@ -379,7 +384,6 @@
         showPrivateNotes: false, // 显示非公开备注
 
         // ---- 锁隐回复树 / 锁隐作者树 / 次级NUKE默认值 ----
-        treeButtons: true,             // 在楼层操作栏注入"锁隐树"入口
         lockHideReplyTree: true,       // 允许使用"锁隐回复树"
         lockHideAuthor: true,          // 允许使用"锁隐作者树"
         lockHidePage: true,            // 允许使用"锁隐页"（锁隐本页所有回复）
@@ -1607,14 +1611,6 @@
                         '</div>' +
                         '<div class="warden-section">' +
                             '<h3>功能开关</h3>' +
-                            '<div class="warden-form-row">' +
-                                '<label>楼层显示锁隐树入口:</label>' +
-                                '<label class="kw-toggle" style="flex:0 0 auto;">' +
-                                    '<input type="checkbox" data-tree-setting="treeButtons">' +
-                                    '<span class="kw-slider"></span>' +
-                                '</label>' +
-                                '<span style="font-size:11px;color:#8b6914;">关闭后不再往楼层操作栏注入按钮（已注入的刷新页面后消失）</span>' +
-                            '</div>' +
                             '<div class="warden-form-row">' +
                                 '<label>启用锁隐回复树:</label>' +
                                 '<label class="kw-toggle" style="flex:0 0 auto;">' +
@@ -3527,7 +3523,7 @@
             // Entry points are registered in NGA's OWN button system
             // (commonui.postBtn.d + genB-created controls), exactly the way NGA Warden
             // Utils does it. That is what makes them appear as native-looking buttons
-            // in the hover bar next to 引用/编辑/更多, and again under 更多 -> 管理.
+            // in the hover bar next to \u5F15\u7528/\u7F16\u8F91/\u66F4\u591A, and again under \u66F4\u591A -> \u7BA1\u7406.
             // Injecting our own <a> into the floor markup (the previous approach) did
             // not survive NGA re-rendering and never looked native.
             // ============================================================
@@ -3664,13 +3660,22 @@
                 return t.closest ? t.closest('a') : t;
             }
 
-            // Register / refresh the two official menu entries.
+            // \u81F3\u5C11\u8981\u6709\u4E00\u4E2A\u9501\u9690\u5165\u53E3\u5F00\u7740\uFF0C\u5426\u5219\u4E0D\u5FC5\u6CE8\u518C\u4EFB\u4F55\u83DC\u5355\u9879\u3002
+            // \uFF08\u539F\u6765\u8FD9\u91CC\u8FD8\u6709\u4E00\u4E2A treeButtons \u603B\u5F00\u5173\uFF0C\u4E0E\u8FD9\u4E09\u4E2A\u5B50\u5F00\u5173\u529F\u80FD\u91CD\u590D\uFF0C\u5DF2\u5220\u9664\uFF09
+            function wantAny() {
+                var s = settings_();
+                return s.lockHideReplyTree !== false
+                    || s.lockHideAuthor !== false
+                    || s.lockHidePage !== false;
+            }
+
+            // Register / refresh the official menu entries.
             function registerMenuEntries() {
                 var pb = postBtnOf();
                 if (!pb || !pb.d || typeof pb.d !== 'object') return false;
                 var s = settings_();
                 var allow = surfaceAllowed(null) || argsFromPage().some(surfaceAllowed);
-                var on = !!s.treeButtons;
+                var on = wantAny();
 
                 if (on && allow) {
                     pb.d[BTN_TREE] = {
@@ -3749,17 +3754,8 @@
                 return !!(on && allow);
             }
 
-            // \u65e7\u7248\u81ea\u5efa\u5165\u53e3\u7684\u6807\u8BB0\uff1a\u5347\u7EA7\u540e\u628a\u5B83\u6E05\u6389\u3002
-            function removeLegacyEntries() {
-                var btns = document.querySelectorAll('.nga-wd-tree-btn');
-                for (var i = 0; i < btns.length; i++) {
-                    var b = btns[i];
-                    if (b.parentNode) b.parentNode.removeChild(b);
-                }
-            }
-
-            // Wrap genB so the two buttons land in the hover bar beside 更多.
-            // Faithful to NGA Warden Utils: siblings of the 更多 cell, never children
+            // Wrap genB so the two buttons land in the hover bar beside \u66F4\u591A.
+            // Faithful to NGA Warden Utils: siblings of the \u66F4\u591A cell, never children
             // of the table (that shows up outside tbody as a stray first button).
             function wrapHoverBar() {
                 var pb = postBtnOf();
@@ -3770,7 +3766,7 @@
                     var bar = orig(argid, opt);
                     if (!bar || !bar.querySelectorAll) return bar;
                     var arg = this.argCache ? this.argCache[argid] : null;
-                    if (!settings_().treeButtons || !surfaceAllowed(arg)) return bar;
+                    if (!wantAny() || !surfaceAllowed(arg)) return bar;
 
                     var links = bar.querySelectorAll('a');
                     var more = null;
@@ -3814,9 +3810,9 @@
                     }
 
                     var s = settings_();
-                    // Each put() inserts immediately left of 更多, so we call them in
-                    // reverse display order: 锁隐页 ends up farthest right, next to
-                    // 锁隐作者树.
+                    // Each put() inserts immediately left of \u66F4\u591A, so we call them in
+                    // reverse display order: \u9501\u9690\u9875 ends up farthest right, next to
+                    // \u9501\u9690\u4F5C\u8005\u6811.
                     if (s.lockHidePage !== false) put(BTN_PAGE, LABEL_PAGE);
                     if (s.lockHideAuthor !== false && !isTopicArg(arg)) put(BTN_AUTHOR, LABEL_AUTHOR);
                     put(BTN_TREE, LABEL_TREE);
@@ -3854,14 +3850,7 @@
             // bars dropped so a repaired bar appears on the next hover.
             function reparse() {
                 if (!getCurrentTid()) return false;
-                var settings = loadSettings();
                 var state = menuState();
-                if (!settings.treeButtons) {
-                    if (state.ok) return true;
-                    registerMenuEntries();
-                    return false;
-                }
-                removeLegacyEntries();
                 if (state.ok) return true;
                 var ok = registerMenuEntries();
                 if (ok) {
@@ -3885,7 +3874,7 @@
                         || (n.getAttribute && n.getAttribute('data-nga-wd'))));
             }
 
-            // Only re-act when something the entry depends on actually appeared —
+            // Only re-act when something the entry depends on actually appeared \u2014
             // the same idea as the reference's addedWardenSurface(). Reparsing on every
             // DOM change is what kept rebuilding (and thus clearing) the action bar.
             var SURFACE_SEL = 'tr.topicrow, #topicrows tr, table.forumbox.postbox,'
@@ -3948,11 +3937,6 @@
                 if (!installed) return;
                 var settings = loadSettings();
                 observeDocument();
-                if (!settings.treeButtons) {
-                    applyHighlightSetting(false);
-                    registerMenuEntries();
-                    return;
-                }
                 applyHighlightSetting(settings.treeButtonHighlight !== false);
                 reparse();
                 startWatch();
@@ -3986,24 +3970,25 @@
             }
 
             // Cheap health check, modelled on the reference's menuIntact():
-            // are our ids registered, in the 管理 list, and is genB still wrapped?
+            // are our ids registered, in the \u7BA1\u7406 list, and is genB still wrapped?
             function menuState() {
                 var s = settings_();
-                var wantOn = !!s.treeButtons;
                 var pb = postBtnOf();
                 if (!pb || !pb.d) return { ok: false, broken: false, allow: false };
                 var allow = surfaceAllowed(null) || argsFromPage().some(surfaceAllowed);
                 var admin = adminList(pb);
-                var wantAuthor = wantOn && allow && s.lockHideAuthor !== false;
-                var wantPage = wantOn && allow && s.lockHidePage !== false;
-                var ok = (wantOn === (!!pb.d[BTN_TREE]))
+                // each entry is governed by its own sub-switch
+                var wantTree = allow && s.lockHideReplyTree !== false;
+                var wantAuthor = allow && s.lockHideAuthor !== false;
+                var wantPage = allow && s.lockHidePage !== false;
+                var ok = (wantTree === (!!pb.d[BTN_TREE]))
                     && (wantPage === (!!pb.d[BTN_PAGE]))
                     && (wantAuthor === (!!pb.d[BTN_AUTHOR]))
                     && (entryWraps >= MAX_GENB_WRAPS
                         || (typeof pb.genB === 'function' && pb.genB._ngaWdBtns));
                 if (admin) {
                     ok = ok
-                        && ((wantOn && allow) === (admin.indexOf(BTN_TREE) >= 0))
+                        && (wantTree === (admin.indexOf(BTN_TREE) >= 0))
                         && (wantPage === (admin.indexOf(BTN_PAGE) >= 0))
                         && (wantAuthor === (admin.indexOf(BTN_AUTHOR) >= 0));
                 }
@@ -4025,7 +4010,6 @@
                     observer = null;
                 }
                 closeMenu();
-                removeLegacyEntries();
                 // unregister our entries so NGA stops rendering them
                 var pb = postBtnOf();
                 if (pb && pb.d) {
@@ -4044,22 +4028,15 @@
             }
 
             function onSettingsChanged(key) {
-                if (key === 'treeButtons') {
-                    var settings = loadSettings();
-                    if (!settings.treeButtons) {
-                        stopFeature();
-                    } else {
-                        startFeature();
-                    }
-                    return;
-                }
+                // \u65E7\u7248\u7684 treeButtons \u603B\u5F00\u5173\u5DF2\u5220\u9664\uFF1B\u82E5\u7528\u6237\u7684 localStorage \u91CC\u8FD8\u5B58\u7740\u8FD9\u4E2A\u952E\uFF0C
+                // \u5F53\u4F5C\u666E\u901A\u91CD\u5EFA\u5904\u7406\uFF0C\u4E0D\u518D\u5F71\u54CD\u5165\u53E3\uFF08\u4E00\u5F8B\u6309\u4E09\u4E2A\u5B50\u5F00\u5173\u8D70\uFF09\u3002
                 if (key === 'lockHideReplyTree' || key === 'lockHideAuthor'
                     || key === 'lockHidePage'
                     || key === 'treeMaxPages' || key === 'treeSkipLocked') {
                     scheduleReparse();
                     return;
                 }
-                // Highlight is purely cosmetic — flip it on the live controls rather
+                // Highlight is purely cosmetic \u2014 flip it on the live controls rather
                 // than rebuilding the menu (a rebuild drops cached hover bars).
                 if (key === 'treeButtonHighlight') {
                     applyHighlightSetting(loadSettings().treeButtonHighlight !== false);
@@ -4118,7 +4095,7 @@
                     hint.textContent = '\u5F53\u524D\u9875\u9762\u6CA1\u6709\u7BA1\u7406\u6743\u9650';
                     menu.appendChild(hint);
                 } else {
-                    var replyEnabled = !!settings.treeButtons && !!settings.lockHideReplyTree;
+                    var replyEnabled = settings.lockHideReplyTree !== false;
                     var replyBtn = document.createElement('button');
                     replyBtn.type = 'button';
                     replyBtn.id = 'nga-wd-tree-menu-reply';
@@ -4142,7 +4119,7 @@
                     menu.appendChild(replyBtn);
 
                     if (info.floor !== 0) {
-                        var authorEnabled = !!settings.treeButtons && !!settings.lockHideAuthor;
+                        var authorEnabled = settings.lockHideAuthor !== false;
                         var authorBtn = document.createElement('button');
                         authorBtn.type = 'button';
                         authorBtn.id = 'nga-wd-tree-menu-author';
@@ -4199,7 +4176,7 @@
             //   4) HTML (login page / rate limited / interstitial)
             // The previous version only handled (1) and (4); a plain JSON body that did
             // not start with `{` at offset 0, or a script store without the exact
-            // variable name, fell through to "无法解析回复数据".
+            // variable name, fell through to "\u65E0\u6CD5\u89E3\u6790\u56DE\u590D\u6570\u636E".
             // ============================================================
 
             // Split a string into a "structural" copy: string/regex contents blanked out.
@@ -4382,7 +4359,7 @@
                 // 2) JS object literal (single quotes / unquoted keys)
                 v = evalObjectText(text);
                 if (v && looksLikeStore(v)) return v;
-                // 3) JSON parsed but not a store we recognise — still usable if it
+                // 3) JSON parsed but not a store we recognise \u2014 still usable if it
                 //    carries __R somewhere (return it, the caller reads .data.__R)
                 var loose = tryJson(text);
                 if (loose) return loose;
@@ -5465,11 +5442,14 @@
                     hoverWrapped: false,
                     surfaceAllowed: false,
                     args: 0,
-                    legacyEntries: 0,
-                    treeButtons: false
+                    highlight: false,
+                    anyEntryOn: false
                 };
                 try { out.tid = Number(getCurrentTid()) || 0; } catch (err) { out.tid = -1; }
-                try { out.treeButtons = !!settings_().treeButtons; } catch (err) { out.treeButtons = null; }
+                try {
+                    out.highlight = settings_().treeButtonHighlight !== false;
+                    out.anyEntryOn = wantAny();
+                } catch (err) { out.highlight = null; }
                 var pb = postBtnOf();
                 out.postBtn = !!(pb && pb.d);
                 if (pb && pb.d) {
@@ -5483,7 +5463,6 @@
                 var args = argsFromPage();
                 out.args = args.length;
                 out.surfaceAllowed = args.some(surfaceAllowed);
-                out.legacyEntries = document.querySelectorAll('.nga-wd-tree-btn').length;
                 return out;
             }
 
