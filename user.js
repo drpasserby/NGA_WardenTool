@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.4.1
-// @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值等功能模块
+// @version      1.4.2
+// @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值、论坛域名重定向等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
 // @match        *://g.nga.cn/*
@@ -10,7 +10,7 @@
 // @match        *://ngabbs.com/*
 // @match        *://ngacn.cc/*
 // @license      GPL-3.0
-// @icon         http://bbs.nga.cn/favicon.ico
+// @icon         https://bbs.nga.cn/favicon.ico
 // @downloadURL  https://update.greasyfork.org/scripts/582076/nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7.user.js
 // @updateURL    https://update.greasyfork.org/scripts/582076/nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7.user.js
 // @grant        none
@@ -390,6 +390,7 @@
         treeButtonHighlight: true,     // 对三个特殊功能按钮启用高亮配色
         treeMaxPages: 10,              // 单次向后/向前检索页数上限(1-10)
         treeSkipLocked: true,          // 跳过已经是锁隐状态的楼层
+        redirectHost: '',              // 强制重定向到的域名（'' = 不重定向）
         nukeDefaultsOn: true,          // 次级NUKE默认值总开关
         lesserNukeScope: '大区内',      // 范围默认值
         lesserNukeDays: '禁言4天',      // 禁言默认值
@@ -549,10 +550,65 @@
         }, 100);
     }
 
+    // 论坛域名重定向：把当前 NGA 域名换成用户选择的域名。
+    // 用 location.replace 不留下历史记录，避免重定向后按返回键又被弹回来。
+    var ALL_NGA_HOSTS = ['bbs.nga.cn', 'g.nga.cn', 'nga.178.com', 'ngabbs.com', 'ngacn.cc'];
+    var REDIRECT_HOSTS = ALL_NGA_HOSTS;
+
+    // 目标域名白名单：只认这五个，防止 localStorage 被改动后跳到任意站点
+    function isRedirectableHost(host) {
+        host = String(host || '').toLowerCase();
+        if (!host) return false;
+        for (var i = 0; i < ALL_NGA_HOSTS.length; i++) {
+            if (host === ALL_NGA_HOSTS[i]) return true;
+        }
+        return false;
+    }
+
+    function isAllowedRedirectHost(host) {
+        return isRedirectableHost(host);
+    }
+
+    // 读取"重定向"设置：返回目标域名；未开启或值非法时返回 ''
+    function redirectTarget() {
+        var v = loadAppSettings().redirectHost;
+        if (!v) return '';
+        v = String(v).toLowerCase();
+        for (var i = 0; i < REDIRECT_HOSTS.length; i++) {
+            if (v === REDIRECT_HOSTS[i]) return v;
+        }
+        return '';
+    }
+
+    // 域名替换：保留协议、端口、路径、查询串与锚点
+    // host 省略时读设置；无论来自参数还是设置，都必须过白名单
+    function applyRedirect(host) {
+        var w = pageWindow();
+        var loc = w.location;
+        if (!loc) return false;
+        var target = String(host || redirectTarget() || '').toLowerCase();
+        if (!target || !isAllowedRedirectHost(target)) return false;
+        var current = String((loc.hostname || '')).toLowerCase();
+        if (!current) return false;
+        // 只在这五个 NGA 域名之间跳，防止在别的站点上被误改地址
+        if (!isRedirectableHost(current)) return false;
+        if (current === target) return false;
+        // 与参考实现等价：location.href.replace(location.hostname, 目标域名)
+        var next = String(loc.href).replace(loc.hostname, target);
+        log('重定向：', loc.href + ' -> ' + next);
+        try {
+            loc.replace(next);
+        } catch (e) {
+            logError('重定向失败', e);
+            return false;
+        }
+        return true;
+    }
+
 
     // ===================================
     // 获取页面参数
-    // ===================================f分分
+    // ===================================
     function getCurrentPage() {
         var page = getUrlParam('page');
         return page ? parseInt(page) : 1;
@@ -1479,7 +1535,7 @@
                             '<div class="warden-form-row">' +
                                 '<label>删除登录按钮:</label>' +
                                 '<label class="kw-toggle" style="flex:0 0 auto;">' +
-                                    '<input type="checkbox" id="warden-setting-remove-login">' +
+                                    '<input type="checkbox" data-app-setting="removeLoginBtn">' +
                                     '<span class="kw-slider"></span>' +
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">开启后移除导航栏中的"登录"按钮</span>' +
@@ -1487,7 +1543,7 @@
                             '<div class="warden-form-row">' +
                                 '<label>删除NGA水印:</label>' +
                                 '<label class="kw-toggle" style="flex:0 0 auto;">' +
-                                    '<input type="checkbox" id="warden-setting-watermark">' +
+                                    '<input type="checkbox" data-app-setting="removeWatermark">' +
                                     '<span class="kw-slider"></span>' +
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">开启后清除.c2元素内联样式，移除NGA页面的水印</span>' +
@@ -1495,7 +1551,7 @@
                             '<div class="warden-form-row">' +
                                 '<label>查看赞踩比:</label>' +
                                 '<label class="kw-toggle" style="flex:0 0 auto;">' +
-                                    '<input type="checkbox" id="warden-setting-votes">' +
+                                    '<input type="checkbox" data-app-setting="showVotes">' +
                                     '<span class="kw-slider"></span>' +
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">开启后每个楼层显示赞/踩计数（需在read.php页面使用）</span>' +
@@ -1503,10 +1559,26 @@
                             '<div class="warden-form-row">' +
                                 '<label>显示非公开备注:</label>' +
                                 '<label class="kw-toggle" style="flex:0 0 auto;">' +
-                                    '<input type="checkbox" id="warden-setting-notes">' +
+                                    '<input type="checkbox" data-app-setting="showPrivateNotes">' +
                                     '<span class="kw-slider"></span>' +
                                 '</label>' +
                                 '<span style="font-size:11px;color:#8b6914;">将版主备注始终可见，无需鼠标悬停（需GREATER权限）</span>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="warden-section">' +
+                            '<h3>重定向</h3>' +
+                            '<p style="font-size:12px;color:#8b6914;">强制把论坛网址替换为下方选择的域名。选择"不重定向"即关闭该功能；选好后当前页面会立即跳转一次。</p>' +
+                            '<div class="warden-form-row">' +
+                                '<label>重定向到:</label>' +
+                                '<select class="warden-input warden-input-short" data-app-setting="redirectHost">' +
+                                    '<option value="">不重定向</option>' +
+                                    '<option value="bbs.nga.cn">bbs.nga.cn</option>' +
+                                    '<option value="g.nga.cn">g.nga.cn</option>' +
+                                    '<option value="nga.178.com">nga.178.com</option>' +
+                                    '<option value="ngabbs.com">ngabbs.com</option>' +
+                                    '<option value="ngacn.cc">ngacn.cc</option>' +
+                                '</select>' +
+                                '<span style="font-size:11px;color:#8b6914;">仅在 NGA 的这几个域名之间跳转，不会修改其它地址</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="warden-section">' +
@@ -1592,14 +1664,9 @@
                         '</div>' +
                     '</div>' +
                     // ---- 页面4: 锁隐树 ----
-                    // 注意：本区块（版权与致谢）不在 .staging 模块里，重建模块时不要覆盖它。
                     '<div class="warden-page" data-page="4">' +
                         '<div class="warden-section">' +
-                            '<h3>版权与致谢</h3>' + '<p>本页功能中的锁隐回复树 / 锁隐作者树（锁隐本页不是）移植自 <b>NGA Warden Utils</b>，原脚本作者：'
-                                + '<a href="https://greasyfork.org/users/73441-watereast" target="_blank" rel="noopener">WaterEast</a>。</p>' +
-                            '<p>感谢鸭的代码。</p>' +
-                            '<p style="color:#c0392b;">本页仅为<b>优化使用</b>而做的精简移植；'
-                                + '想要更完整的体验请直接使用源脚本 NGA Warden Utils。</p>' +
+                            '<h3>来源</h3>' + '<p>本页功能中的锁隐回复树 / 锁隐作者树（锁隐本页不是）移植自 <b>NGA Warden Utils</b>，原脚本作者：WaterEast</p>' +
                         '</div>' +
                         '<div class="warden-section">' +
                             '<h3>锁隐回复树 / 锁隐作者树</h3>' +
@@ -2883,16 +2950,20 @@
             updateTreePermHint();
         }
         if (index === 5) {
-            var as = loadAppSettings();
-            var removeLoginToggle = document.getElementById('warden-setting-remove-login');
-            if (removeLoginToggle) removeLoginToggle.checked = as.removeLoginBtn;
-            var watermarkToggle = document.getElementById('warden-setting-watermark');
-            if (watermarkToggle) watermarkToggle.checked = as.removeWatermark;
-            var votesToggle = document.getElementById('warden-setting-votes');
-            if (votesToggle) votesToggle.checked = as.showVotes;
-            var notesToggle = document.getElementById('warden-setting-notes');
-            if (notesToggle) notesToggle.checked = as.showPrivateNotes;
+            loadAppSettingsToForm();
             loadNukeSettingsToForm();
+        }
+    }
+
+    // 把「设置」页的基础开关回填到面板
+    function loadAppSettingsToForm() {
+        var as = loadAppSettings();
+        var nodes = document.querySelectorAll('[data-app-setting]');
+        for (var i = 0; i < nodes.length; i++) {
+            var key = nodes[i].getAttribute('data-app-setting');
+            if (!as.hasOwnProperty(key)) continue;
+            if (nodes[i].type === 'checkbox') nodes[i].checked = as[key] === true;
+            else nodes[i].value = as[key];
         }
     }
 
@@ -3204,78 +3275,60 @@
         }
 
         // ========== 设置页事件 ==========
+        // 这些开关的落地逻辑各不相同，统一走 data-app-setting + 下面这个分发函数
 
-        // 删除登录按钮开关
-        var removeLoginToggle = document.getElementById('warden-setting-remove-login');
-        if (removeLoginToggle) {
-            // 加载当前设置状态
-            var appSettings = loadAppSettings();
-            removeLoginToggle.checked = appSettings.removeLoginBtn;
+        function onAppSettingChanged(key, value) {
+            var as = loadAppSettings();
+            as[key] = value;
+            saveAppSettings(as);
 
-            removeLoginToggle.addEventListener('change', function() {
-                appSettings.removeLoginBtn = this.checked;
-                saveAppSettings(appSettings);
-                applyRemoveLoginBtn(this.checked);
-                if (this.checked) {
-                    addScoreLogEntry('info', '已开启：删除登录按钮');
-                }
-            });
+            if (key === 'removeLoginBtn') {
+                applyRemoveLoginBtn(value);
+                if (value) addScoreLogEntry('info', '已开启：删除登录按钮');
+                return;
+            }
+            if (key === 'removeWatermark') {
+                if (value) applyRemoveWatermark();
+                addScoreLogEntry('info', value ? '已开启：删除NGA水印' : '已关闭：删除NGA水印，刷新页面后生效');
+                return;
+            }
+            if (key === 'showVotes') {
+                if (value) applyShowVotes();
+                addScoreLogEntry('info', value ? '已开启：查看赞踩比' : '已关闭：查看赞踩比，刷新页面后生效');
+                return;
+            }
+            if (key === 'showPrivateNotes') {
+                if (value) applyShowPrivateNotes();
+                addScoreLogEntry('info', value ? '已开启：显示非公开备注' : '已关闭：显示非公开备注，刷新页面后生效');
+                return;
+            }
+            if (key === 'redirectHost') {
+                addScoreLogEntry('info', value ? ('已设置：网址重定向到 ' + value) : '已关闭：网址重定向');
+                // 设置完立刻生效；成功跳转时后面的代码不会再执行
+                if (value) applyRedirect(value);
+                return;
+            }
         }
 
-        // 一键锁隐作者开关
-        // 删除NGA水印开关
-        var watermarkToggle = document.getElementById('warden-setting-watermark');
-        if (watermarkToggle) {
-            watermarkToggle.checked = loadAppSettings().removeWatermark;
-
-            watermarkToggle.addEventListener('change', function() {
-                var as = loadAppSettings();
-                as.removeWatermark = this.checked;
-                saveAppSettings(as);
-                if (this.checked) {
-                    applyRemoveWatermark();
-                }
-                addScoreLogEntry('info', this.checked ? '已开启：删除NGA水印' : '已关闭：删除NGA水印，刷新页面后生效');
-            });
-        }
-
-        // 查看赞踩比开关
-        var votesToggle = document.getElementById('warden-setting-votes');
-        if (votesToggle) {
-            votesToggle.checked = loadAppSettings().showVotes;
-
-            votesToggle.addEventListener('change', function() {
-                var as = loadAppSettings();
-                as.showVotes = this.checked;
-                saveAppSettings(as);
-                if (this.checked) {
-                    applyShowVotes();
-                }
-                addScoreLogEntry('info', this.checked ? '已开启：查看赞踩比' : '已关闭：查看赞踩比，刷新页面后生效');
-            });
-        }
-
-        // 显示非公开备注开关
-        var notesToggle = document.getElementById('warden-setting-notes');
-        if (notesToggle) {
-            notesToggle.checked = loadAppSettings().showPrivateNotes;
-
-            notesToggle.addEventListener('change', function() {
-                var as = loadAppSettings();
-                as.showPrivateNotes = this.checked;
-                saveAppSettings(as);
-                if (this.checked) {
-                    applyShowPrivateNotes();
-                }
-                addScoreLogEntry('info', this.checked ? '已开启：显示非公开备注' : '已关闭：显示非公开备注，刷新页面后生效');
-            });
+        // "重定向到"下拉框的当前值（处理不存在的元素时静默返回）
+        function loadRedirectSettingToForm() {
+            var sel = document.querySelector('[data-app-setting="redirectHost"]');
+            if (sel && sel.value !== redirectTarget()) sel.value = redirectTarget();
         }
 
         // ========== 锁隐树设置事件 ==========
-        var treeNodes = document.querySelectorAll('[data-tree-setting]');
+        // 两种来源合并成一批：[data-tree-setting] 是锁隐树模块的开关，
+        // [data-app-setting] 是本工具的通用开关（两者落地逻辑不同，见上面的 scope 分支）。
+        // 不用逗号合并选择器，是为了兼容只认单个简单属性选择器的测试桩。
+        var treeNodes = [];
+        var treeScoped = document.querySelectorAll('[data-tree-setting]');
+        for (var ts = 0; ts < treeScoped.length; ts++) treeNodes.push(treeScoped[ts]);
+        var appScoped = document.querySelectorAll('[data-app-setting]');
+        for (var aps = 0; aps < appScoped.length; aps++) treeNodes.push(appScoped[aps]);
         for (var ti = 0; ti < treeNodes.length; ti++) {
             (function(el) {
-                var key = el.getAttribute('data-tree-setting');
+                var key = el.getAttribute('data-tree-setting') || el.getAttribute('data-app-setting');
+                var scope = el.hasAttribute('data-tree-setting') ? 'tree' : 'app';
                 el.addEventListener('change', function() {
                     var value = el.type === 'checkbox' ? el.checked : el.value;
                     if (key === 'treeMaxPages') {
@@ -3284,6 +3337,10 @@
                         if (n > 10) n = 10;
                         value = n;
                         el.value = n;
+                    }
+                    if (scope === 'app') {
+                        onAppSettingChanged(key, value);
+                        return;
                     }
                     setAppSetting(key, value);
                     if (TREE_FEATURE && typeof TREE_FEATURE.onSettingsChanged === 'function') {
@@ -3294,6 +3351,7 @@
             })(treeNodes[ti]);
         }
         loadTreeSettingsToForm();
+        loadRedirectSettingToForm();
 
         // ========== 次级NUKE默认值设置事件 ==========
         var nukeNodes = document.querySelectorAll('[data-nuke-setting]');
@@ -3366,6 +3424,9 @@
     function init() {
         log('开始初始化');
         try {
+            // 重定向要尽早执行：不重定向时是一次纯读取，立即返回
+            if (applyRedirect()) return;
+
             createPanel();
             bindEvents();
 
@@ -3445,7 +3506,8 @@
             nukeDefaults: NUKE_DEFAULTS,
             loadSettings: loadAppSettings,
             saveSettings: saveAppSettings,
-            setSetting: setAppSetting
+            setSetting: setAppSetting,
+            redirect: applyRedirect
         };
     } catch (e) { /* 页面可能禁止写 window */ }
 
