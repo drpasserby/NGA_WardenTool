@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.4.2
+// @version      1.4.3
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值、论坛域名重定向等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -160,25 +160,33 @@
         // ---- 楼层操作栏里的三个"锁隐"入口按钮 ----
         // 这些按钮不是我们自己建的元素，而是 NGA 官方 postBtn 生成的 <a>，
         // 与"引用/编辑/更多"并排。所以这里**不复刻尺寸**：字号、行高、内边距
-        // 全部 inherit，让它们和同排的原生按钮完全一致。
+        // 全部跟随宿主，让它们和同排的原生按钮保持一致。
         //
-        // 踩过的坑：之前给每个按钮都写死 padding/font-size，还在触屏媒体查询里
-        // 加大到 6px/14px，结果手机端（不同浏览器的 font boosting / 系统字号缩放）
-        // 高度与旁边按钮对不齐——有的浏览器还会把内容撑高但行高不变，视觉上错位。
-        // 现在只保证盒模型与相邻单元格一致，尺寸交给宿主页面。
-        '[data-nga-wd-entry]{display:inline-block!important;visibility:visible!important;opacity:1!important;',
-        'vertical-align:middle!important;box-sizing:border-box!important;',
+        // 踩过的坑（两次，方向相反，记下来免得再来第三次）：
+        //   1) 最早给每个按钮写死 padding/font-size，还在触屏媒体查询里加大到
+        //      6px/14px —— 手机端高度与旁边按钮对不齐。
+        //   2) 改成 `white-space:nowrap` + `width/height:auto` 想强行撑开，结果
+        //      按钮被挤成又窄又高的两行小方块，PC 端和手机端都明显异常。
+        // 结论：**一个尺寸属性都不要碰**。只保留三件事——让它在父单元格里
+        // 正常对齐、能被点击、文字居中。剩下的交给宿主。
+        //
+        // 唯一要分两种情况的是「更多」弹窗：那里每个按钮是多行的
+        // .cell.block_txt_big，NGA 给它更大的字号和一个统一的底部内边距，好让
+        // 整行等高。对这种按钮我们连 padding 都不能归零，否则它比同排的矮一截，
+        // 会从网格里掉出来。所以下面的规则全部排除 .block_txt_big。
+        '[data-nga-wd-entry]{visibility:visible!important;opacity:1!important;',
+        'text-decoration:none!important;cursor:pointer!important}',
+        '[data-nga-wd-entry]:not(.block_txt_big){display:inline-block!important;',
+        'vertical-align:middle!important;text-align:center!important;',
         'margin:0 0 0 .5em!important;padding:0!important;',
+        'width:auto!important;max-width:none!important;',
         'font:inherit!important;line-height:normal!important;',
-        'white-space:nowrap!important;text-decoration:none!important;',
-        'position:static!important;float:none!important;max-width:none!important;min-width:0!important;',
-        'width:auto!important;height:auto!important;max-height:none!important;min-height:0!important;',
-        'letter-spacing:normal!important;text-indent:0!important;overflow:visible!important;',
-        'text-transform:none!important;cursor:pointer!important}',
+        'overflow:visible!important}',
         // 运行中（点过之后）的状态
         '[data-nga-wd-entry].nga-wd-busy{opacity:.55!important;cursor:default!important}',
-        // 注意：这里**刻意不再有**任何 font-size / padding 的媒体查询覆盖。
-        // 手机端要与同排按钮等高，唯一可靠的办法就是完全不干预尺寸。
+        // 注意：这里**刻意不再有**任何 font-size / padding / white-space /
+        // width / height 的媒体查询，也没有 white-space:nowrap。要让手机端与
+        // 同排按钮等高，唯一可靠的办法就是完全不干预尺寸。
 
         // ---- 特殊功能按钮高亮配色 ----
         // 只改配色，不碰尺寸（尺寸由上面那条基础规则统一 inherit）。
@@ -3845,6 +3853,14 @@
                             || bar.querySelector('tbody tr') || bar.querySelector('tr');
                         if (row) {
                             var td = document.createElement('td');
+                            // Copy the native cell's own classes. The reference script
+                            // leaves this td unclassed, but NGA sizes its hover-bar
+                            // cells (.cell/.td etc.); a bare td gets no width, so our
+                            // label was squeezed into a narrow off-grid box on both
+                            // desktop and mobile. Copying the classes makes the
+                            // host lay our cell out like its siblings, without us
+                            // guessing which class name it uses.
+                            if (moreTd && moreTd.className) td.className = moreTd.className;
                             td.appendChild(btn);
                             if (moreTd) row.insertBefore(td, moreTd);
                             else row.appendChild(td);
