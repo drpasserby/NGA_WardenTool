@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.4.3
+// @version      1.4.4
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值、论坛域名重定向等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -715,6 +715,28 @@
     // ===================================
     // 加分核心引擎
     // ===================================
+    // nuke.php 正常返回 JSON；登录失效或风控拦截会返回 HTML 页面。
+    // 只有可解析且不含 error 的 JSON 才算成功，否则一律失败。
+    function parseNukeResponse(xhr) {
+        var text = xhr.responseText || '';
+        if (!text) throw new Error('服务器返回空响应');
+        var resp;
+        try {
+            resp = JSON.parse(text);
+        } catch (e) {
+            var snippet = text.replace(/\s+/g, ' ').slice(0, 80);
+            if (/<html|<!doctype|登录|login|验证/i.test(text)) {
+                throw new Error('返回了 HTML 页面（登录可能已失效或被风控拦截）：' + snippet);
+            }
+            throw new Error('响应不是 JSON，可能被拦截：' + snippet);
+        }
+        if (resp && resp.error && String(resp.error) !== '0') {
+            var detail = typeof resp.error === 'string' ? resp.error : JSON.stringify(resp.error);
+            throw new Error('服务器错误: ' + detail);
+        }
+        return (resp && typeof resp === 'object') ? resp : { success: true };
+    }
+
     var SCORE_ENGINE = {
         isRunning: false,
         stopRequested: false,
@@ -754,24 +776,14 @@
                     '&raw=3';
 
                 xhr.onload = function() {
-                    if (xhr.status === 200) {
-                        try {
-                            var resp = JSON.parse(xhr.responseText);
-                            if (resp.error) {
-                                reject(new Error('服务器错误: ' + JSON.stringify(resp.error)));
-                            } else {
-                                resolve(resp);
-                            }
-                        } catch (e) {
-                            // 非JSON响应，检查是否包含成功标志
-                            if (xhr.responseText.indexOf('"error"') === -1) {
-                                resolve({ success: true });
-                            } else {
-                                reject(new Error('响应解析失败'));
-                            }
-                        }
-                    } else {
+                    if (xhr.status !== 200) {
                         reject(new Error('HTTP ' + xhr.status));
+                        return;
+                    }
+                    try {
+                        resolve(parseNukeResponse(xhr));
+                    } catch (e) {
+                        reject(e);
                     }
                 };
 
@@ -1001,6 +1013,10 @@
         // 启动批量加分
         start: function(settings) {
             var self = this;
+            if (self.isRunning) {
+                addScoreLogEntry('info', '已有加分任务正在运行，忽略本次启动');
+                return false;
+            }
             self.settings = settings;
             self.isRunning = true;
             self.stopRequested = false;
@@ -1053,6 +1069,7 @@
 
             self.navigateToPage(settings.tid, startPage);
             // 页面跳转后会通过resume自动继续
+            return true;
         },
 
         // 页面循环处理
@@ -1210,10 +1227,16 @@
         // 恢复批量加分（页面加载后自动调用）
         resume: function() {
             var self = this;
+            if (self.isRunning) {
+                log('加分任务已在运行，忽略重复恢复');
+                return false;
+            }
             var runningState = loadRunningState();
             if (!runningState) return false;
 
             var settings = loadScoreSettings();
+            // 恢复的是运行状态里的那个任务，tid 必须以状态为准，避免设置被改后恢复错帖子
+            settings.tid = runningState.tid;
             self.settings = settings;
 
             var currentTid = getCurrentTid();
@@ -1315,23 +1338,14 @@
                     '&pm=0&info=&raw=3';
 
                 xhr.onload = function() {
-                    if (xhr.status === 200) {
-                        try {
-                            var resp = JSON.parse(xhr.responseText);
-                            if (resp.error) {
-                                reject(new Error(JSON.stringify(resp.error)));
-                            } else {
-                                resolve(resp);
-                            }
-                        } catch (e) {
-                            if (xhr.responseText.indexOf('"error"') === -1) {
-                                resolve({ success: true });
-                            } else {
-                                reject(new Error('响应解析失败'));
-                            }
-                        }
-                    } else {
+                    if (xhr.status !== 200) {
                         reject(new Error('HTTP ' + xhr.status));
+                        return;
+                    }
+                    try {
+                        resolve(parseNukeResponse(xhr));
+                    } catch (e) {
+                        reject(e);
                     }
                 };
                 xhr.onerror = function() { reject(new Error('网络请求失败')); };
@@ -3091,10 +3105,16 @@
                     alert('请输入有效的声望值（非零值）！');
                     return;
                 }
+                if (SCORE_ENGINE.isRunning) {
+                    alert('加分任务正在运行中，请先停止当前任务。');
+                    return;
+                }
                 log('启动批量加分', settings);
                 saveScoreSettings(settings);
                 updateControlButtons(true);
-                SCORE_ENGINE.start(settings);
+                if (!SCORE_ENGINE.start(settings)) {
+                    updateControlButtons(false);
+                }
             });
         }
 
@@ -3461,23 +3481,35 @@
             var btnWrap = createOpenButton();
             btnWrap.addEventListener('click', showPanel);
 
-            // 检查是否需要自动恢复加分任务
+            // 检查未完成的加分任务：只提示，不得自动执行。
+            // 打开帖子就恢复会在用户不知情时继续批量加分，必须先确认。
             var runningState = loadRunningState();
             if (runningState) {
                 var currentTid = getCurrentTid();
-                if (currentTid === runningState.tid) {
-                    log('检测到未完成的加分任务，准备恢复...');
-                    // 自动打开面板并切换到批量加分模块
-                    showPanel();
-                    switchTab(0);
-                    // 延迟恢复，确保页面完全加载及DOM就绪
+                if (Number(runningState.tid) === currentTid) {
+                    var doneCount = (runningState.processedFloors || []).length;
+                    var resumeTip = '检测到未完成的批量加分任务：\n'
+                        + '目标帖子 TID：' + runningState.tid + '\n'
+                        + '上次进度：第 ' + (runningState.currentPage || 1) + ' 页，已处理 ' + doneCount + ' 个楼层\n\n'
+                        + '确定要继续加分吗？\n取消 = 保持暂停，不执行任何加分（刷新或重新打开可再次恢复）';
+                    // 等页面与楼层渲染完成再询问
                     setTimeout(function() {
-                        log('自动恢复批量加分...');
-                        var resumed = SCORE_ENGINE.resume();
-                        if (!resumed) {
-                            log('恢复失败，状态可能已变更');
+                        var agreed = false;
+                        try { agreed = window.confirm(resumeTip); } catch (e) { agreed = false; }
+                        if (!agreed) {
+                            log('用户未确认，跳过自动恢复');
+                            addScoreLogEntry('info', '检测到未完成的任务，已跳过自动恢复（任务保持暂停）');
+                            return;
                         }
-                    }, 2000);
+                        showPanel();
+                        switchTab(0);
+                        setTimeout(function() {
+                            log('用户已确认，恢复批量加分...');
+                            if (!SCORE_ENGINE.resume()) {
+                                log('恢复失败，状态可能已变更');
+                            }
+                        }, 300);
+                    }, 1500);
                 } else {
                     log('检测到未完成的加分任务但当前不在目标页面(TID=' + currentTid + ', 目标TID=' + runningState.tid + ')，等待用户操作');
                 }
