@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NGA版主管理增强工具
 // @namespace    https://greasyfork.org/zh-CN/scripts/582076-nga%E7%89%88%E4%B8%BB%E7%AE%A1%E7%90%86%E5%A2%9E%E5%BC%BA%E5%B7%A5%E5%85%B7
-// @version      1.4.3
+// @version      1.4.4
 // @description  NGA玩家社区网页版版主管理增强工具，包含批量加分、锁隐回复树、锁隐作者树、次级NUKE默认值、论坛域名重定向等功能模块
 // @author       UST
 // @match        *://bbs.nga.cn/*
@@ -2886,6 +2886,20 @@
         return settings;
     }
 
+    // 当前是否在「用户回复页」：thread.php 且带 authorid 参数（带不带值都算）。
+    // 只看路径和参数名，不依赖参数值，避免 authorid 为空时判不出来。
+    function isUserReplyPage() {
+        var path = String(window.location.pathname || '');
+        if (path.indexOf('thread.php') < 0) return false;
+        return /[?&]authorid(=|&|$)/.test(String(window.location.search || ''));
+    }
+
+    // 面板打开时默认停在哪个页签（索引对应 TAB_PAGE / 标签栏位置）。
+    // 用户回复页上直接进「用户回复操作」(索引 2)，其余页面维持原来的批量加分(0)。
+    function defaultTabIndex() {
+        return isUserReplyPage() ? 2 : 0;
+    }
+
     // ===================================
     // UI: 面板显示/隐藏
     // ===================================
@@ -2894,7 +2908,7 @@
         var overlay = document.getElementById('nga-warden-overlay');
         if (overlay) {
             overlay.classList.add('show');
-            switchTab(0);
+            switchTab(defaultTabIndex());
             loadSettingsToForm();
             updatePageInfoUI();
 
@@ -2937,10 +2951,14 @@
     // 这样要调整页签先后（例如把"锁隐树"放到"设置"前面）不需要搬动大段 HTML。
     var TAB_PAGE = [0, 1, 2, 3, 4, 5];
 
+    // 当前页签索引（0 = 批量加分）。供调试/自动化校验读取。
+    var currentTabIndex = 0;
+
     function switchTab(index) {
         var tabBtns = document.querySelectorAll('#nga-warden-tabs .tab-btn');
         var pages = document.querySelectorAll('#nga-warden-body .warden-page');
         var want = TAB_PAGE[index];
+        currentTabIndex = index;
         for (var i = 0; i < tabBtns.length; i++) {
             tabBtns[i].classList.toggle('active', i === index);
         }
@@ -3515,7 +3533,11 @@
             loadSettings: loadAppSettings,
             saveSettings: saveAppSettings,
             setSetting: setAppSetting,
-            redirect: applyRedirect
+            redirect: applyRedirect,
+            isUserReplyPage: isUserReplyPage,
+            defaultTabIndex: defaultTabIndex,
+            showPanel: showPanel,
+            currentTab: function () { return currentTabIndex; }
         };
     } catch (e) { /* 页面可能禁止写 window */ }
 
